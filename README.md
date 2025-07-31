@@ -11,6 +11,8 @@ A Model Context Protocol (MCP) server for automating ChatGPT web interface using
 - 🛡️ **Secure Configuration**: Environment-based configuration with .env support
 - 🔍 **Search Mode**: Toggle web search functionality
 - 📤 **Export Conversations**: Save chats in various formats
+- 🔧 **Comprehensive Error Recovery**: Automatic handling of network errors, timeouts, browser crashes, and session expiration
+- ⚡ **Batch Operations**: Execute multiple operations in sequence for efficiency
 
 ## Installation
 
@@ -141,6 +143,33 @@ uv run ruff format .
 uv run ruff check .
 ```
 
+## Error Handling & Recovery
+
+The MCP server includes comprehensive error handling and automatic recovery for common issues:
+
+### Automatic Recovery Scenarios
+- **Network Errors**: Automatic retry with exponential backoff
+- **Browser Crashes**: Automatic browser restart and session restoration
+- **Session Expiration**: Automatic re-authentication when needed
+- **Element Not Found**: Page refresh and element waiting
+- **Timeout Errors**: Extended waiting and page responsiveness checks
+- **Rate Limiting**: Intelligent waiting with exponential backoff
+
+### Error Types Handled
+- Connection failures and network instability
+- ChatGPT UI changes and element location issues
+- Browser crashes and unexpected closures
+- Authentication token expiration
+- Rate limiting from excessive requests
+- Page loading timeouts and delays
+
+### Recovery Strategies
+- **Exponential Backoff**: Progressively longer delays between retries
+- **Multiple Selectors**: Fallback element selectors for UI changes
+- **Session Restoration**: Automatic login when sessions expire
+- **Context Preservation**: Maintain conversation state during recovery
+- **Graceful Degradation**: Continue operation even with partial failures
+
 ## Troubleshooting
 
 ### Login Issues
@@ -157,6 +186,12 @@ uv run ruff check .
 - Not all models may be available to your account
 - O3 models require Pro subscription
 - Model names are case-sensitive
+
+### Error Recovery
+- Error recovery is automatic and logged at INFO level
+- Set logging level to DEBUG for detailed recovery information
+- Recovery attempts are limited to prevent infinite loops
+- Browser restart is the ultimate fallback for persistent issues
 
 ## Security
 
