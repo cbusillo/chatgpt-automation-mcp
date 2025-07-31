@@ -1,0 +1,120 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environment
+.venv/
+venv/
+ENV/
+env/
+.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Secrets and Configuration
+.env
+.env.*
+secrets.json
+config.local.json
+*.key
+*.pem
+*.cert
+credentials.json
+auth.json
+
+# Logs
+*.log
+logs/
+*.log.*
+debug.log
+error.log
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+*.cover
+.hypothesis/
+test_results/
+
+# Temporary files and directories
+temp/
+tmp/
+.tmp/
+*.tmp
+*.temp
+*.bak
+*.backup
+*.old
+scratch/
+
+# Screenshots and test artifacts
+screenshots/
+*.png
+*.jpg
+*.jpeg
+*.gif
+test_outputs/
+test_data/
+*.har
+
+# Playwright specific
+playwright-report/
+test-results/
+playwright/.cache/
+
+# Session data
+session_data/
+browser_data/
+cookies.json
+localStorage.json
+
+# OS files
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Package files
+*.tar.gz
+*.zip
+*.rar
+
+# Development test scripts
+test_*.py
+!test_unit_*.py  # Keep unit tests
+debug_*.py
+scratch_*.py
+experiment_*.py
+manual_test_*.py
+
+# MCP specific
+mcp_debug/
+mcp_logs/
+.mcp_cache/
