@@ -87,6 +87,9 @@ Add to your Claude desktop configuration:
 - `chatgpt_export_conversation` - Export conversation as markdown or JSON
 - `chatgpt_save_conversation` - Save conversation to file
 - `chatgpt_edit_message` - Edit a previous user message
+- `chatgpt_list_conversations` - List all available conversations
+- `chatgpt_switch_conversation` - Switch to a different conversation
+- `chatgpt_delete_conversation` - Delete a conversation
 
 ### Example Usage
 

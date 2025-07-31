@@ -724,6 +724,191 @@ class ChatGPTBrowserController:
             logger.error(f"Failed to save conversation: {e}")
             return None
 
+    async def list_conversations(self) -> list[dict] | None:
+        """List all available conversations
+
+        Returns:
+            List of conversation dictionaries with id, title, and timestamp
+        """
+        if not self.page:
+            await self.launch()
+
+        try:
+            # Look for conversation list
+            conversation_list_selectors = [
+                '[data-testid="conversation-list"]',
+                'nav[aria-label="Chat history"]',
+                'div[class*="conversation-list"]',
+                "div.flex.flex-col.gap-2.text-gray-100",  # Common pattern
+            ]
+
+            conversations = []
+            for selector in conversation_list_selectors:
+                list_element = self.page.locator(selector).first
+                if await list_element.count() > 0:
+                    # Find individual conversation items
+                    item_selectors = [
+                        'a[href^="/c/"]',  # Conversation links
+                        '[data-testid="conversation-item"]',
+                        'div[role="button"]',
+                    ]
+
+                    for item_sel in item_selectors:
+                        items = list_element.locator(item_sel)
+                        count = await items.count()
+                        if count > 0:
+                            for i in range(count):
+                                item = items.nth(i)
+                                try:
+                                    # Extract conversation info
+                                    text = await item.text_content()
+                                    if text and text.strip():
+                                        # Try to get href for ID
+                                        href = await item.get_attribute("href")
+                                        conv_id = href.split("/")[-1] if href else f"conv_{i}"
+
+                                        conversations.append(
+                                            {"id": conv_id, "title": text.strip(), "index": i}
+                                        )
+                                except Exception:
+                                    continue
+                            break
+
+                    if conversations:
+                        break
+
+            logger.info(f"Found {len(conversations)} conversations")
+            return conversations
+
+        except Exception as e:
+            logger.error(f"Failed to list conversations: {e}")
+            return None
+
+    async def switch_conversation(self, conversation_id: str | int) -> bool:
+        """Switch to a different conversation
+
+        Args:
+            conversation_id: Either the conversation ID string or index number
+
+        Returns:
+            True if switch was successful
+        """
+        if not self.page:
+            await self.launch()
+
+        try:
+            # If it's an index, get the conversation list
+            if isinstance(conversation_id, int):
+                conversations = await self.list_conversations()
+                if not conversations or conversation_id >= len(conversations):
+                    logger.error(f"Invalid conversation index: {conversation_id}")
+                    return False
+                conversation_id = conversations[conversation_id]["id"]
+
+            # Navigate to conversation URL
+            if conversation_id.startswith("conv_"):
+                # It's an index-based ID, need to click the item
+                conversations = await self.list_conversations()
+                for conv in conversations:
+                    if conv["id"] == conversation_id:
+                        # Find and click the conversation item
+                        item_selectors = [
+                            f'a[href^="/c/"]:has-text("{conv["title"]}")',
+                            f'[data-testid="conversation-item"]:has-text("{conv["title"]}")',
+                            f'div[role="button"]:has-text("{conv["title"]}")',
+                        ]
+
+                        for selector in item_selectors:
+                            item = self.page.locator(selector).first
+                            if await item.count() > 0:
+                                await item.click()
+                                await asyncio.sleep(1)  # Wait for navigation
+                                logger.info(f"Switched to conversation: {conv['title']}")
+                                return True
+            else:
+                # Direct navigation by ID
+                await self.page.goto(f"https://chatgpt.com/c/{conversation_id}")
+                await self.page.wait_for_load_state("domcontentloaded")
+                await asyncio.sleep(1)
+
+                # Verify we're in the right conversation
+                if await self.is_ready():
+                    logger.info(f"Switched to conversation: {conversation_id}")
+                    return True
+
+            logger.error("Failed to switch conversation")
+            return False
+
+        except Exception as e:
+            logger.error(f"Failed to switch conversation: {e}")
+            return False
+
+    async def delete_conversation(self, conversation_id: str | int) -> bool:
+        """Delete a conversation
+
+        Args:
+            conversation_id: Either the conversation ID string or index number
+
+        Returns:
+            True if deletion was successful
+        """
+        if not self.page:
+            await self.launch()
+
+        try:
+            # First switch to the conversation
+            if not await self.switch_conversation(conversation_id):
+                return False
+
+            # Look for delete/options button
+            delete_selectors = [
+                'button[aria-label*="Delete"]',
+                'button[aria-label*="Options"]',
+                'button[aria-label*="More"]',
+                'button:has(svg[class*="trash"])',
+            ]
+
+            for selector in delete_selectors:
+                btn = self.page.locator(selector).first
+                if await btn.count() > 0 and await btn.is_visible():
+                    await btn.click()
+                    await asyncio.sleep(0.5)
+
+                    # Look for delete option in menu
+                    if "Options" in selector or "More" in selector:
+                        delete_option_selectors = [
+                            'button:has-text("Delete")',
+                            '[role="menuitem"]:has-text("Delete")',
+                        ]
+
+                        for del_sel in delete_option_selectors:
+                            del_btn = self.page.locator(del_sel).first
+                            if await del_btn.count() > 0:
+                                await del_btn.click()
+                                break
+
+                    # Confirm deletion
+                    confirm_selectors = [
+                        'button:has-text("Delete")',
+                        'button:has-text("Confirm")',
+                        'button[aria-label="Confirm deletion"]',
+                    ]
+
+                    for conf_sel in confirm_selectors:
+                        conf_btn = self.page.locator(conf_sel).last  # Often in modal
+                        if await conf_btn.count() > 0 and await conf_btn.is_visible():
+                            await conf_btn.click()
+                            await asyncio.sleep(1)
+                            logger.info("Conversation deleted")
+                            return True
+
+            logger.error("Delete button not found")
+            return False
+
+        except Exception as e:
+            logger.error(f"Failed to delete conversation: {e}")
+            return False
+
     async def edit_message(self, message_index: int, new_content: str) -> bool:
         """Edit a previous message in the conversation
 

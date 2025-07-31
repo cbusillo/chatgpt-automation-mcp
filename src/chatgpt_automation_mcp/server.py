@@ -225,6 +225,39 @@ async def list_tools() -> list[Tool]:
                 "required": ["message_index", "new_content"],
             },
         ),
+        Tool(
+            name="chatgpt_list_conversations",
+            description="List all available ChatGPT conversations",
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        Tool(
+            name="chatgpt_switch_conversation",
+            description="Switch to a different conversation",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "conversation_id": {
+                        "type": ["string", "integer"],
+                        "description": "Conversation ID or index to switch to",
+                    }
+                },
+                "required": ["conversation_id"],
+            },
+        ),
+        Tool(
+            name="chatgpt_delete_conversation",
+            description="Delete a conversation",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "conversation_id": {
+                        "type": ["string", "integer"],
+                        "description": "Conversation ID or index to delete",
+                    }
+                },
+                "required": ["conversation_id"],
+            },
+        ),
     ]
 
 
@@ -361,6 +394,44 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
                 ]
             else:
                 return [TextContent(type="text", text=f"Failed to edit message {message_index}")]
+
+        elif name == "chatgpt_list_conversations":
+            conversations = await ctrl.list_conversations()
+
+            if conversations:
+                return [TextContent(type="text", text=json.dumps(conversations, indent=2))]
+            else:
+                return [TextContent(type="text", text="No conversations found")]
+
+        elif name == "chatgpt_switch_conversation":
+            conversation_id = arguments["conversation_id"]
+
+            success = await ctrl.switch_conversation(conversation_id)
+
+            if success:
+                return [
+                    TextContent(type="text", text=f"Switched to conversation: {conversation_id}")
+                ]
+            else:
+                return [
+                    TextContent(
+                        type="text", text=f"Failed to switch to conversation: {conversation_id}"
+                    )
+                ]
+
+        elif name == "chatgpt_delete_conversation":
+            conversation_id = arguments["conversation_id"]
+
+            success = await ctrl.delete_conversation(conversation_id)
+
+            if success:
+                return [TextContent(type="text", text=f"Deleted conversation: {conversation_id}")]
+            else:
+                return [
+                    TextContent(
+                        type="text", text=f"Failed to delete conversation: {conversation_id}"
+                    )
+                ]
 
         else:
             raise McpError(ErrorData(code=-32601, message=f"Unknown tool: {name}"))
