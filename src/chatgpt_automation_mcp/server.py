@@ -171,6 +171,42 @@ async def list_tools() -> list[Tool]:
             description="Regenerate the last response from ChatGPT",
             inputSchema={"type": "object", "properties": {}, "required": []},
         ),
+        Tool(
+            name="chatgpt_export_conversation",
+            description="Export the current conversation in markdown or JSON format",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "format": {
+                        "type": "string",
+                        "description": "Export format",
+                        "enum": ["markdown", "json"],
+                        "default": "markdown",
+                    }
+                },
+                "required": [],
+            },
+        ),
+        Tool(
+            name="chatgpt_save_conversation",
+            description="Export and save the current conversation to a file",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "filename": {
+                        "type": "string",
+                        "description": "Custom filename (without extension). Auto-generated if not provided.",
+                    },
+                    "format": {
+                        "type": "string",
+                        "description": "Export format",
+                        "enum": ["markdown", "json"],
+                        "default": "markdown",
+                    },
+                },
+                "required": [],
+            },
+        ),
     ]
 
 
@@ -274,6 +310,26 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
                 return [TextContent(type="text", text="Response regeneration initiated")]
             else:
                 return [TextContent(type="text", text="Failed to regenerate response")]
+
+        elif name == "chatgpt_export_conversation":
+            format = arguments.get("format", "markdown")
+            content = await ctrl.export_conversation(format)
+
+            if content:
+                return [TextContent(type="text", text=content)]
+            else:
+                return [TextContent(type="text", text="Failed to export conversation")]
+
+        elif name == "chatgpt_save_conversation":
+            filename = arguments.get("filename")
+            format = arguments.get("format", "markdown")
+
+            file_path = await ctrl.save_conversation(filename, format)
+
+            if file_path:
+                return [TextContent(type="text", text=f"Conversation saved to: {file_path}")]
+            else:
+                return [TextContent(type="text", text="Failed to save conversation")]
 
         else:
             raise McpError(ErrorData(code=-32601, message=f"Unknown tool: {name}"))

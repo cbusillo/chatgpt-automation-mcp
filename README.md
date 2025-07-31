@@ -84,6 +84,8 @@ Add to your Claude desktop configuration:
 - `chatgpt_toggle_search` - Enable/disable web search mode
 - `chatgpt_upload_file` - Upload a file to the conversation
 - `chatgpt_regenerate` - Regenerate the last response
+- `chatgpt_export_conversation` - Export conversation as markdown or JSON
+- `chatgpt_save_conversation` - Save conversation to file
 
 ### Example Usage
 

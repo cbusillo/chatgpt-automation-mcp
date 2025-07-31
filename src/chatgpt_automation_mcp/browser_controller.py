@@ -629,6 +629,101 @@ class ChatGPTBrowserController:
             logger.error(f"Failed to regenerate response: {e}")
             return False
 
+    async def export_conversation(self, format: str = "markdown") -> str | None:
+        """Export the current conversation in specified format
+
+        Args:
+            format: Export format - "markdown" or "json"
+
+        Returns:
+            Exported conversation content or None if failed
+        """
+        if not self.page:
+            await self.launch()
+
+        try:
+            # Get the conversation content
+            conversation = await self.get_conversation()
+            if not conversation:
+                logger.warning("No conversation to export")
+                return None
+
+            if format == "json":
+                # Return raw JSON
+                import json
+
+                return json.dumps(conversation, indent=2)
+
+            elif format == "markdown":
+                # Convert to markdown format
+                md_lines = []
+                md_lines.append(f"# ChatGPT Conversation")
+                md_lines.append(f"\n**Model**: {conversation.get('model', 'Unknown')}")
+                md_lines.append(f"**Date**: {conversation.get('timestamp', 'Unknown')}\n")
+
+                messages = conversation.get("messages", [])
+                for msg in messages:
+                    role = msg.get("role", "unknown")
+                    content = msg.get("content", "")
+
+                    if role == "user":
+                        md_lines.append(f"## User\n\n{content}\n")
+                    elif role == "assistant":
+                        md_lines.append(f"## ChatGPT\n\n{content}\n")
+                    else:
+                        md_lines.append(f"## {role.title()}\n\n{content}\n")
+
+                return "\n".join(md_lines)
+
+            else:
+                logger.error(f"Unsupported export format: {format}")
+                return None
+
+        except Exception as e:
+            logger.error(f"Failed to export conversation: {e}")
+            return None
+
+    async def save_conversation(
+        self, filename: str | None = None, format: str = "markdown"
+    ) -> Path | None:
+        """Export and save conversation to file
+
+        Args:
+            filename: Custom filename (without extension). If None, auto-generates.
+            format: Export format - "markdown" or "json"
+
+        Returns:
+            Path to saved file or None if failed
+        """
+        try:
+            # Export the conversation
+            content = await self.export_conversation(format)
+            if not content:
+                return None
+
+            # Determine file extension
+            ext = "md" if format == "markdown" else "json"
+
+            # Generate filename if not provided
+            if not filename:
+                from datetime import datetime
+
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                filename = f"chatgpt_conversation_{timestamp}"
+
+            # Create full path
+            file_path = self.config.EXPORT_DIR / f"{filename}.{ext}"
+
+            # Write to file
+            file_path.write_text(content, encoding="utf-8")
+            logger.info(f"Conversation saved to: {file_path}")
+
+            return file_path
+
+        except Exception as e:
+            logger.error(f"Failed to save conversation: {e}")
+            return None
+
 
 # Test function for direct execution
 def test_browser_controller():
