@@ -156,6 +156,20 @@ async def list_tools() -> list[Tool]:
             },
         ),
         Tool(
+            name="chatgpt_toggle_browsing",
+            description="Enable or disable web browsing mode",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "enable": {
+                        "type": "boolean",
+                        "description": "True to enable web browsing, false to disable",
+                    }
+                },
+                "required": ["enable"],
+            },
+        ),
+        Tool(
             name="chatgpt_upload_file",
             description="Upload a file to the current conversation",
             inputSchema={
@@ -282,6 +296,7 @@ async def list_tools() -> list[Tool]:
                                         "select_model",
                                         "get_current_model",
                                         "toggle_search_mode",
+                                        "toggle_browsing_mode",
                                         "upload_file",
                                         "regenerate_response",
                                         "export_conversation",
@@ -396,6 +411,13 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
             success = await ctrl.toggle_search_mode(enable)
             status = "enabled" if enable else "disabled"
             result = f"Web search {status}" if success else "Failed to toggle web search"
+            return [TextContent(type="text", text=result)]
+
+        elif name == "chatgpt_toggle_browsing":
+            enable = arguments["enable"]
+            success = await ctrl.toggle_browsing_mode(enable)
+            status = "enabled" if enable else "disabled"
+            result = f"Web browsing {status}" if success else "Failed to toggle web browsing"
             return [TextContent(type="text", text=result)]
 
         elif name == "chatgpt_upload_file":

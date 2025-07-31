@@ -82,6 +82,7 @@ Add to your Claude desktop configuration:
 - `chatgpt_status` - Check if ChatGPT is ready
 - `chatgpt_wait_response` - Wait for response completion
 - `chatgpt_toggle_search` - Enable/disable web search mode
+- `chatgpt_toggle_browsing` - Enable/disable web browsing mode
 - `chatgpt_upload_file` - Upload a file to the conversation
 - `chatgpt_regenerate` - Regenerate the last response
 - `chatgpt_export_conversation` - Export conversation as markdown or JSON

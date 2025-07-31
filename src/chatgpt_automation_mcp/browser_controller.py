@@ -573,6 +573,18 @@ class ChatGPTBrowserController:
             logger.error(f"Failed to toggle search mode: {e}")
             return False
 
+    async def toggle_browsing_mode(self, enable: bool) -> bool:
+        """Toggle web browsing mode on or off (alias for toggle_search_mode)
+
+        Args:
+            enable: True to enable browsing, False to disable
+
+        Returns:
+            True if successful, False otherwise
+        """
+        # Web browsing and search mode are the same feature in ChatGPT
+        return await self.toggle_search_mode(enable)
+
     async def upload_file(self, file_path: str) -> bool:
         """Upload a file to the current conversation"""
         if not self.page:
@@ -1187,6 +1199,11 @@ class ChatGPTBrowserController:
                 elif operation_name == "toggle_search_mode":
                     enable = args.get("enable", True)
                     op_result["result"] = await self.toggle_search_mode(enable)
+                    op_result["success"] = op_result["result"]
+
+                elif operation_name == "toggle_browsing_mode":
+                    enable = args.get("enable", True)
+                    op_result["result"] = await self.toggle_browsing_mode(enable)
                     op_result["success"] = op_result["result"]
 
                 elif operation_name == "upload_file":
