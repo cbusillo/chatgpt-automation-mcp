@@ -86,6 +86,7 @@ Add to your Claude desktop configuration:
 - `chatgpt_regenerate` - Regenerate the last response
 - `chatgpt_export_conversation` - Export conversation as markdown or JSON
 - `chatgpt_save_conversation` - Save conversation to file
+- `chatgpt_edit_message` - Edit a previous user message
 
 ### Example Usage
 

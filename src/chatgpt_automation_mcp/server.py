@@ -207,6 +207,24 @@ async def list_tools() -> list[Tool]:
                 "required": [],
             },
         ),
+        Tool(
+            name="chatgpt_edit_message",
+            description="Edit a previous user message in the conversation",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "message_index": {
+                        "type": "integer",
+                        "description": "Index of the user message to edit (0-based)",
+                    },
+                    "new_content": {
+                        "type": "string",
+                        "description": "New content for the message",
+                    },
+                },
+                "required": ["message_index", "new_content"],
+            },
+        ),
     ]
 
 
@@ -330,6 +348,19 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
                 return [TextContent(type="text", text=f"Conversation saved to: {file_path}")]
             else:
                 return [TextContent(type="text", text="Failed to save conversation")]
+
+        elif name == "chatgpt_edit_message":
+            message_index = arguments["message_index"]
+            new_content = arguments["new_content"]
+
+            success = await ctrl.edit_message(message_index, new_content)
+
+            if success:
+                return [
+                    TextContent(type="text", text=f"Message {message_index} edited successfully")
+                ]
+            else:
+                return [TextContent(type="text", text=f"Failed to edit message {message_index}")]
 
         else:
             raise McpError(ErrorData(code=-32601, message=f"Unknown tool: {name}"))

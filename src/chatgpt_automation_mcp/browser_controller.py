@@ -724,6 +724,132 @@ class ChatGPTBrowserController:
             logger.error(f"Failed to save conversation: {e}")
             return None
 
+    async def edit_message(self, message_index: int, new_content: str) -> bool:
+        """Edit a previous message in the conversation
+
+        Args:
+            message_index: Index of the message to edit (0-based, user messages only)
+            new_content: New content for the message
+
+        Returns:
+            True if edit was successful, False otherwise
+        """
+        if not self.page:
+            await self.launch()
+
+        try:
+            # Find all user message elements
+            user_message_selectors = [
+                '[data-message-author-role="user"]',
+                'div[class*="user-message"]',
+                "div.group:has(div.text-right)",  # Some versions use this layout
+            ]
+
+            user_messages = None
+            for selector in user_message_selectors:
+                messages = self.page.locator(selector)
+                count = await messages.count()
+                if count > 0:
+                    user_messages = messages
+                    break
+
+            if not user_messages:
+                logger.error("No user messages found")
+                return False
+
+            # Check if index is valid
+            message_count = await user_messages.count()
+            if message_index < 0 or message_index >= message_count:
+                logger.error(
+                    f"Invalid message index: {message_index} (found {message_count} messages)"
+                )
+                return False
+
+            # Get the specific message
+            target_message = user_messages.nth(message_index)
+
+            # Look for edit button
+            edit_button_selectors = [
+                'button[aria-label*="Edit"]',
+                'button:has(svg[aria-label*="edit"])',
+                'button:has(svg[class*="pencil"])',
+            ]
+
+            edit_button = None
+            for selector in edit_button_selectors:
+                btn = target_message.locator(selector).first
+                if await btn.count() > 0:
+                    edit_button = btn
+                    break
+
+            if not edit_button:
+                # Try hovering to reveal edit button
+                await target_message.hover()
+                await asyncio.sleep(0.5)
+
+                # Try again
+                for selector in edit_button_selectors:
+                    btn = target_message.locator(selector).first
+                    if await btn.count() > 0:
+                        edit_button = btn
+                        break
+
+            if not edit_button:
+                logger.error("Edit button not found")
+                return False
+
+            # Click edit button
+            await edit_button.click()
+            await asyncio.sleep(0.5)
+
+            # Find the edit textarea
+            edit_textarea_selectors = [
+                'textarea[aria-label*="Edit"]',
+                "textarea.editing",
+                "textarea:focus",  # Often the textarea gets focus
+            ]
+
+            edit_textarea = None
+            for selector in edit_textarea_selectors:
+                textarea = self.page.locator(selector).first
+                if await textarea.count() > 0:
+                    edit_textarea = textarea
+                    break
+
+            if not edit_textarea:
+                logger.error("Edit textarea not found")
+                return False
+
+            # Clear and type new content
+            await edit_textarea.clear()
+            await edit_textarea.fill(new_content)
+
+            # Submit the edit - usually Enter or a submit button
+            submit_selectors = [
+                'button[aria-label*="Save"]',
+                'button[aria-label*="Submit"]',
+                'button:has(svg[aria-label*="send"])',
+            ]
+
+            submitted = False
+            for selector in submit_selectors:
+                btn = self.page.locator(selector).first
+                if await btn.count() > 0 and await btn.is_visible():
+                    await btn.click()
+                    submitted = True
+                    break
+
+            if not submitted:
+                # Try pressing Enter
+                await edit_textarea.press("Enter")
+
+            logger.info(f"Edited message at index {message_index}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to edit message: {e}")
+            return False
+
 
 # Test function for direct execution
 def test_browser_controller():
