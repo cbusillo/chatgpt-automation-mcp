@@ -347,20 +347,43 @@ class ChatGPTBrowserController:
             return None
 
         try:
-            # Look for model indicator
+            # Look for model indicator with improved selectors
             model_selectors = [
                 '[data-testid="model-picker"] span',
                 'button[aria-haspopup="menu"] span',
+                "button[data-state] span",  # New UI pattern
+                "div[data-radix-popper-content-wrapper] button span",  # Dropdown button
                 ".model-selector span",
+                "button:has(svg.icon-chevron-down) span",  # Button with dropdown icon
+                "nav button span",  # Sometimes in nav
             ]
 
             for selector in model_selectors:
                 try:
-                    element = self.page.locator(selector).first
-                    if await element.count() > 0:
-                        return await element.inner_text()
+                    elements = self.page.locator(selector)
+                    count = await elements.count()
+                    for i in range(min(count, 5)):  # Check first 5 matches
+                        element = elements.nth(i)
+                        if await element.is_visible():
+                            text = await element.inner_text()
+                            # Validate it's a model name
+                            if any(
+                                model in text.lower() for model in ["gpt", "o1", "o3", "claude"]
+                            ):
+                                return text.strip()
                 except Exception:
                     continue
+
+            # Fallback: Check conversation metadata
+            try:
+                # Sometimes model info is in page title or hidden metadata
+                title = await self.page.title()
+                if "GPT" in title or "o1" in title or "o3" in title:
+                    for model in ["GPT-4.5", "GPT-4", "o3-mini", "o3", "o1-mini", "o1"]:
+                        if model in title:
+                            return model
+            except Exception:
+                pass
 
             return None
 
@@ -369,50 +392,104 @@ class ChatGPTBrowserController:
             return None
 
     async def select_model(self, model: str) -> bool:
-        """Select a specific model"""
+        """Select a specific model with improved reliability"""
         if not self.page:
             await self.launch()
 
         try:
-            # Click model picker
+            # First check if we're already on the requested model
+            current = await self.get_current_model()
+            if current and model.lower() in current.lower():
+                logger.info(f"Already using model: {current}")
+                return True
+
+            # Click model picker with improved selectors
             picker_selectors = [
                 '[data-testid="model-picker"]',
-                'button[aria-haspopup="menu"]',
+                'button[aria-haspopup="menu"]:has(span)',
+                "button[data-state]:has(span)",
+                "button:has(svg.icon-chevron-down)",
+                "nav button:has(span)",
                 ".model-selector",
+                'div[role="combobox"]',
             ]
 
+            clicked = False
             for selector in picker_selectors:
                 try:
-                    if await self.page.locator(selector).count() > 0:
-                        await self.page.click(selector)
+                    elements = self.page.locator(selector)
+                    count = await elements.count()
+                    for i in range(min(count, 3)):
+                        element = elements.nth(i)
+                        if await element.is_visible():
+                            # Check if it contains model-related text
+                            text = await element.text_content() or ""
+                            if any(m in text.lower() for m in ["gpt", "o1", "o3", "model"]):
+                                await element.click()
+                                clicked = True
+                                break
+                    if clicked:
                         break
                 except Exception:
                     continue
 
-            # Wait for menu to open
-            await asyncio.sleep(0.5)
+            if not clicked:
+                logger.warning("Could not find model picker")
+                return False
 
-            # Map model names to UI text
+            # Wait for menu to open with better detection
+            await self.page.wait_for_selector(
+                '[role="menu"], [role="listbox"], [data-radix-menu-content]',
+                state="visible",
+                timeout=5000,
+            )
+            await asyncio.sleep(0.3)  # Small delay for animation
+
+            # Enhanced model name mapping
             model_map = {
-                "gpt-4": "GPT-4",
-                "gpt-4.5": "GPT-4.5",
-                "o1": "o1",
-                "o1-preview": "o1-preview",
-                "o1-mini": "o1-mini",
-                "o3": "o3",
-                "o3-mini": "o3-mini",
+                "gpt-4": ["GPT-4", "gpt-4", "GPT 4"],
+                "gpt-4.5": ["GPT-4.5", "gpt-4.5", "GPT 4.5", "ChatGPT Plus"],
+                "4o": ["GPT-4o", "4o", "gpt-4o"],
+                "o1": ["o1", "O1"],
+                "o1-preview": ["o1-preview", "O1 Preview", "o1 preview"],
+                "o1-mini": ["o1-mini", "O1 Mini", "o1 mini"],
+                "o3": ["o3", "O3"],
+                "o3-mini": ["o3-mini", "O3 Mini", "o3 mini"],
             }
 
-            ui_model = model_map.get(model.lower(), model)
+            # Get possible UI texts for the model
+            ui_models = model_map.get(model.lower(), [model])
+            if not isinstance(ui_models, list):
+                ui_models = [ui_models]
 
-            # Click on the model option
-            model_option = self.page.locator(f'div[role="menuitem"]:has-text("{ui_model}")')
-            if await model_option.count() > 0:
-                await model_option.click()
-                return True
-            else:
-                logger.warning(f"Model {model} not found in picker")
-                return False
+            # Try to find and click the model option
+            option_selectors = [
+                'div[role="menuitem"]',
+                'div[role="option"]',
+                'button[role="menuitem"]',
+                'li[role="option"]',
+                "[data-radix-menu-item]",
+            ]
+
+            for ui_model in ui_models:
+                for selector in option_selectors:
+                    try:
+                        # Try exact match first
+                        option = self.page.locator(f'{selector}:has-text("{ui_model}")').first
+                        if await option.count() > 0 and await option.is_visible():
+                            await option.click()
+                            await asyncio.sleep(0.5)  # Wait for selection
+
+                            # Verify selection
+                            new_model = await self.get_current_model()
+                            if new_model and ui_model.lower() in new_model.lower():
+                                logger.info(f"Successfully selected model: {new_model}")
+                                return True
+                    except Exception:
+                        continue
+
+            logger.warning(f"Model {model} not found in picker")
+            return False
 
         except Exception as e:
             logger.error(f"Failed to select model: {e}")
@@ -657,7 +734,7 @@ class ChatGPTBrowserController:
             elif format == "markdown":
                 # Convert to markdown format
                 md_lines = []
-                md_lines.append(f"# ChatGPT Conversation")
+                md_lines.append("# ChatGPT Conversation")
                 md_lines.append(f"\n**Model**: {conversation.get('model', 'Unknown')}")
                 md_lines.append(f"**Date**: {conversation.get('timestamp', 'Unknown')}\n")
 
