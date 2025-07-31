@@ -4,6 +4,9 @@ Browser-based ChatGPT controller using Playwright
 
 import asyncio
 import logging
+import os
+import subprocess
+import platform
 from pathlib import Path
 
 from playwright.async_api import (
@@ -90,38 +93,46 @@ class ChatGPTBrowserController:
                     logger.info("Successfully connected via CDP")
                     self.is_cdp_connection = True
                 except Exception as e:
-                    logger.warning(f"CDP connection failed: {e}, falling back to regular launch")
-                    # Fall through to regular launch
-                    self.browser = None
-                    self.context = None
-                    self.page = None
+                    logger.warning(f"CDP connection failed: {e}")
+                    
+                    # Try to launch Chrome with debugging
+                    if await self._launch_chrome_with_debugging():
+                        # Wait a bit for Chrome to start
+                        await asyncio.sleep(3)
+                        
+                        # Try CDP connection again
+                        try:
+                            logger.info("Retrying CDP connection...")
+                            self.browser = await self.playwright.chromium.connect_over_cdp(
+                                self.config.CDP_URL
+                            )
+                            self.context = await self.browser.new_context()
+                            self.page = await self.context.new_page()
+                            logger.info("Successfully connected via CDP after launching Chrome")
+                            self.is_cdp_connection = True
+                        except Exception as retry_e:
+                            logger.error(f"CDP retry failed: {retry_e}")
+                            # Give up on CDP
+                            self.browser = None
+                            self.context = None
+                            self.page = None
+                    else:
+                        # Fall through to regular launch
+                        self.browser = None
+                        self.context = None
+                        self.page = None
             
             # Regular launch if CDP not used or failed
+            if not self.browser and not self.config.USE_CDP:
+                # Only launch Chromium if CDP is explicitly disabled
+                # Otherwise fail - Chromium won't work with Cloudflare
+                logger.error("CDP connection required for ChatGPT automation (Cloudflare protection)")
+                raise Exception("Cannot connect to Chrome. Please ensure Chrome is running or CDP is configured correctly.")
+
+            # Check if we have a browser connection
             if not self.browser:
-                # Browser launch options
-                launch_options = {
-                    "headless": self.config.HEADLESS,
-                    "args": ["--no-sandbox"] if self.config.HEADLESS else [],
-                }
-
-                # Context options for session persistence
-                context_options = {
-                    "locale": "en-US",
-                    "timezone_id": "America/New_York",
-                    "viewport": {"width": 1280, "height": 800},
-                }
-
-                # Load existing session if available
-                if self.config.PERSIST_SESSION:
-                    session_path = self.config.SESSION_DIR / f"{self.config.SESSION_NAME}.json"
-                    if session_path.exists():
-                        logger.info(f"Loading session from {session_path}")
-                        context_options["storage_state"] = str(session_path)
-
-                self.browser = await self.playwright.chromium.launch(**launch_options)
-                self.context = await self.browser.new_context(**context_options)
-                self.page = await self.context.new_page()
-
+                raise Exception("Failed to establish browser connection. Chrome with debugging port is required.")
+            
             # Navigate to ChatGPT
             logger.info("Navigating to ChatGPT...")
             await self.page.goto(
@@ -187,6 +198,108 @@ class ChatGPTBrowserController:
         self.context = None
         self.browser = None
         self.playwright = None
+
+    async def _launch_chrome_with_debugging(self) -> bool:
+        """Launch Chrome with debugging port enabled"""
+        try:
+            system = platform.system()
+            
+            if system == "Darwin":  # macOS
+                chrome_path = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+            elif system == "Windows":
+                chrome_path = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
+            elif system == "Linux":
+                chrome_path = "google-chrome"
+            else:
+                logger.error(f"Unsupported platform: {system}")
+                return False
+            
+            # Check if Chrome is already running with debugging
+            try:
+                import aiohttp
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(f"{self.config.CDP_URL}/json/version") as response:
+                        if response.status == 200:
+                            logger.info("Chrome is already running with debugging port")
+                            return True
+            except Exception:
+                logger.info("Chrome not running with debugging port, will launch it")
+            
+            logger.info(f"Launching Chrome with debugging port on {system}")
+            
+            # Only close Chrome if it's running WITHOUT debugging
+            # First check if Chrome is running at all
+            if system == "Darwin":
+                check_chrome = '''
+                tell application "System Events"
+                    set chromeRunning to exists (processes where name is "Google Chrome")
+                end tell
+                return chromeRunning
+                '''
+                result = subprocess.run(['osascript', '-e', check_chrome], capture_output=True, text=True)
+                chrome_running = result.stdout.strip() == "true"
+                
+                if chrome_running:
+                    logger.info("Chrome is running without debugging port, closing it...")
+                    # Use AppleScript to gracefully quit Chrome
+                    quit_chrome = '''
+                    tell application "Google Chrome"
+                        quit
+                    end tell
+                    '''
+                    subprocess.run(['osascript', '-e', quit_chrome], capture_output=True)
+                    await asyncio.sleep(2)  # Give Chrome time to close
+            elif system == "Windows":
+                # Check if Chrome is running
+                result = subprocess.run(['tasklist', '/FI', 'IMAGENAME eq chrome.exe'], capture_output=True, text=True)
+                chrome_running = "chrome.exe" in result.stdout
+                
+                if chrome_running:
+                    logger.info("Chrome is running without debugging port, closing it...")
+                    subprocess.run(['taskkill', '/F', '/IM', 'chrome.exe'], capture_output=True)
+                    await asyncio.sleep(2)
+            elif system == "Linux":
+                # Check if Chrome is running
+                result = subprocess.run(['pgrep', '-f', 'chrome'], capture_output=True)
+                chrome_running = result.returncode == 0
+                
+                if chrome_running:
+                    logger.info("Chrome is running without debugging port, closing it...")
+                    subprocess.run(['pkill', '-f', 'chrome'], capture_output=True)
+                    await asyncio.sleep(2)
+            
+            # Launch Chrome with debugging port using default profile
+            port = self.config.CDP_URL.split(':')[-1]
+            cmd = [chrome_path, f"--remote-debugging-port={port}"]
+            
+            # Explicitly specify the default Chrome profile location
+            if system == "Darwin":
+                # macOS default Chrome profile location
+                user_data_dir = os.path.expanduser("~/Library/Application Support/Google/Chrome")
+                cmd.extend(["--user-data-dir", user_data_dir])
+            elif system == "Windows":
+                # Windows default Chrome profile location
+                user_data_dir = os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\User Data")
+                cmd.extend(["--user-data-dir", user_data_dir])
+            elif system == "Linux":
+                # Linux default Chrome profile location
+                user_data_dir = os.path.expanduser("~/.config/google-chrome")
+                cmd.extend(["--user-data-dir", user_data_dir])
+            
+            logger.info(f"Launching Chrome with debugging port using profile: {user_data_dir}")
+            
+            # Launch Chrome with ChatGPT URL directly
+            cmd.append("https://chatgpt.com")
+            process = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            logger.info("Chrome launched with debugging port")
+            
+            # Wait for Chrome to be ready
+            await asyncio.sleep(3)
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to launch Chrome with debugging: {e}")
+            return False
 
     async def _needs_login(self) -> bool:
         """Check if login is required"""

@@ -35,21 +35,25 @@ uv run playwright install chromium
 
 To bypass Cloudflare protection, we connect to your existing Chrome browser:
 
-1. **Launch Chrome with debugging port**:
+1. **Close your current Chrome completely** (Cmd+Q on macOS)
+
+2. **Launch Chrome with debugging port**:
    ```bash
-   # macOS
+   # macOS (uses your default profile)
    /Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome --remote-debugging-port=9222
    
-   # Windows
+   # Windows (uses your default profile)
    "C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222
    
-   # Linux
+   # Linux (uses your default profile)
    google-chrome --remote-debugging-port=9222
    ```
 
-2. **Login to ChatGPT** in the browser window that opens
+3. **Your normal Chrome will open** with all your logins preserved
 
-3. **Keep Chrome running** while using the MCP server
+4. **Keep Chrome running** while using the MCP server
+
+**Note**: The debugging port allows the MCP to control Chrome. This is safe for local use only.
 
 ## Configuration
 
