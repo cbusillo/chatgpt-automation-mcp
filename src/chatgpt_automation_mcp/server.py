@@ -258,6 +258,59 @@ async def list_tools() -> list[Tool]:
                 "required": ["conversation_id"],
             },
         ),
+        Tool(
+            name="chatgpt_batch_operations",
+            description="Execute multiple ChatGPT operations in sequence",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "operations": {
+                        "type": "array",
+                        "description": "List of operations to execute in sequence",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "operation": {
+                                    "type": "string",
+                                    "description": "Operation name",
+                                    "enum": [
+                                        "new_chat",
+                                        "send_message",
+                                        "send_and_get_response",
+                                        "get_last_response",
+                                        "get_conversation",
+                                        "select_model",
+                                        "get_current_model",
+                                        "toggle_search_mode",
+                                        "upload_file",
+                                        "regenerate_response",
+                                        "export_conversation",
+                                        "save_conversation",
+                                        "edit_message",
+                                        "list_conversations",
+                                        "switch_conversation",
+                                        "delete_conversation",
+                                        "wait_for_response",
+                                    ],
+                                },
+                                "args": {
+                                    "type": "object",
+                                    "description": "Arguments for the operation",
+                                    "additionalProperties": True,
+                                },
+                                "continue_on_error": {
+                                    "type": "boolean",
+                                    "description": "Whether to continue if this operation fails",
+                                    "default": False,
+                                },
+                            },
+                            "required": ["operation"],
+                        },
+                    }
+                },
+                "required": ["operations"],
+            },
+        ),
     ]
 
 
@@ -432,6 +485,12 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
                         type="text", text=f"Failed to delete conversation: {conversation_id}"
                     )
                 ]
+
+        elif name == "chatgpt_batch_operations":
+            operations = arguments["operations"]
+            result = await ctrl.execute_batch_operations(operations)
+
+            return [TextContent(type="text", text=json.dumps(result, indent=2))]
 
         else:
             raise McpError(ErrorData(code=-32601, message=f"Unknown tool: {name}"))

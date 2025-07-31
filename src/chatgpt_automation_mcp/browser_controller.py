@@ -1112,6 +1112,165 @@ class ChatGPTBrowserController:
             logger.error(f"Failed to edit message: {e}")
             return False
 
+    async def execute_batch_operations(self, operations: list[dict]) -> dict:
+        """Execute multiple operations in sequence with comprehensive error handling
+
+        Args:
+            operations: List of operation dictionaries with format:
+                {
+                    "operation": "operation_name",
+                    "args": {...},  # optional arguments
+                    "continue_on_error": bool  # optional, default False
+                }
+
+        Returns:
+            Dictionary with results for each operation and overall status
+        """
+        if not self.page:
+            await self.launch()
+
+        results = {
+            "success": True,
+            "operations": [],
+            "total_operations": len(operations),
+            "successful_operations": 0,
+            "failed_operations": 0,
+        }
+
+        for i, op in enumerate(operations):
+            operation_name = op.get("operation", "")
+            args = op.get("args", {})
+            continue_on_error = op.get("continue_on_error", False)
+
+            op_result = {
+                "index": i,
+                "operation": operation_name,
+                "success": False,
+                "result": None,
+                "error": None,
+            }
+
+            try:
+                # Map operation names to methods
+                if operation_name == "new_chat":
+                    op_result["result"] = await self.new_chat()
+                    op_result["success"] = True
+
+                elif operation_name == "send_message":
+                    message = args.get("message", "")
+                    op_result["result"] = await self.send_message(message)
+                    op_result["success"] = True
+
+                elif operation_name == "send_and_get_response":
+                    message = args.get("message", "")
+                    timeout = args.get("timeout", 120)
+                    op_result["result"] = await self.send_and_get_response(message, timeout)
+                    op_result["success"] = op_result["result"] is not None
+
+                elif operation_name == "get_last_response":
+                    op_result["result"] = await self.get_last_response()
+                    op_result["success"] = op_result["result"] is not None
+
+                elif operation_name == "get_conversation":
+                    op_result["result"] = await self.get_conversation()
+                    op_result["success"] = op_result["result"] is not None
+
+                elif operation_name == "select_model":
+                    model = args.get("model", "")
+                    op_result["result"] = await self.select_model(model)
+                    op_result["success"] = op_result["result"]
+
+                elif operation_name == "get_current_model":
+                    op_result["result"] = await self.get_current_model()
+                    op_result["success"] = op_result["result"] is not None
+
+                elif operation_name == "toggle_search_mode":
+                    enable = args.get("enable", True)
+                    op_result["result"] = await self.toggle_search_mode(enable)
+                    op_result["success"] = op_result["result"]
+
+                elif operation_name == "upload_file":
+                    file_path = args.get("file_path", "")
+                    op_result["result"] = await self.upload_file(file_path)
+                    op_result["success"] = op_result["result"]
+
+                elif operation_name == "regenerate_response":
+                    op_result["result"] = await self.regenerate_response()
+                    op_result["success"] = op_result["result"]
+
+                elif operation_name == "export_conversation":
+                    format_type = args.get("format", "markdown")
+                    op_result["result"] = await self.export_conversation(format_type)
+                    op_result["success"] = op_result["result"] is not None
+
+                elif operation_name == "save_conversation":
+                    filename = args.get("filename")
+                    format_type = args.get("format", "markdown")
+                    op_result["result"] = await self.save_conversation(filename, format_type)
+                    op_result["success"] = op_result["result"] is not None
+
+                elif operation_name == "edit_message":
+                    message_index = args.get("message_index", 0)
+                    new_content = args.get("new_content", "")
+                    op_result["result"] = await self.edit_message(message_index, new_content)
+                    op_result["success"] = op_result["result"]
+
+                elif operation_name == "list_conversations":
+                    op_result["result"] = await self.list_conversations()
+                    op_result["success"] = op_result["result"] is not None
+
+                elif operation_name == "switch_conversation":
+                    conversation_id = args.get("conversation_id", "")
+                    op_result["result"] = await self.switch_conversation(conversation_id)
+                    op_result["success"] = op_result["result"]
+
+                elif operation_name == "delete_conversation":
+                    conversation_id = args.get("conversation_id", "")
+                    op_result["result"] = await self.delete_conversation(conversation_id)
+                    op_result["success"] = op_result["result"]
+
+                elif operation_name == "wait_for_response":
+                    timeout = args.get("timeout", 30)
+                    op_result["result"] = await self.wait_for_response(timeout)
+                    op_result["success"] = op_result["result"]
+
+                else:
+                    op_result["error"] = f"Unknown operation: {operation_name}"
+                    op_result["success"] = False
+
+            except Exception as e:
+                op_result["error"] = str(e)
+                op_result["success"] = False
+                logger.error(f"Operation {operation_name} failed: {e}")
+
+            # Update counters
+            if op_result["success"]:
+                results["successful_operations"] += 1
+            else:
+                results["failed_operations"] += 1
+                if not continue_on_error:
+                    results["success"] = False
+
+            results["operations"].append(op_result)
+
+            # Stop if operation failed and continue_on_error is False
+            if not op_result["success"] and not continue_on_error:
+                results["success"] = False
+                logger.warning(f"Batch operation stopped at index {i} due to error")
+                break
+
+        # Overall success if all operations succeeded or all failures had continue_on_error=True
+        results["success"] = results["failed_operations"] == 0 or all(
+            op.get("continue_on_error", False)
+            for op in operations[: len(results["operations"])]
+            if not results["operations"][operations.index(op)]["success"]
+        )
+
+        logger.info(
+            f"Batch operations completed: {results['successful_operations']}/{results['total_operations']} successful"
+        )
+        return results
+
 
 # Test function for direct execution
 def test_browser_controller():

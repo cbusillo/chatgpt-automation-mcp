@@ -90,6 +90,7 @@ Add to your Claude desktop configuration:
 - `chatgpt_list_conversations` - List all available conversations
 - `chatgpt_switch_conversation` - Switch to a different conversation
 - `chatgpt_delete_conversation` - Delete a conversation
+- `chatgpt_batch_operations` - Execute multiple operations in sequence
 
 ### Example Usage
 
@@ -103,6 +104,18 @@ response = await chatgpt_send_and_get_response(
     timeout=120  # O3 can take time to think
 )
 print(response)
+
+# Batch operations for efficiency
+batch_result = await chatgpt_batch_operations(operations=[
+    {"operation": "new_chat"},
+    {"operation": "select_model", "args": {"model": "o3"}},
+    {"operation": "send_and_get_response", "args": {
+        "message": "Write a Python function to sort a list",
+        "timeout": 60
+    }},
+    {"operation": "save_conversation", "args": {"filename": "python_help"}},
+])
+print(f"Batch completed: {batch_result['successful_operations']}/{batch_result['total_operations']} operations successful")
 ```
 
 ## Development
