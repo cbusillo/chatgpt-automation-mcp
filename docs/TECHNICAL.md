@@ -2,7 +2,14 @@
 
 ## Architecture Overview
 
-The ChatGPT Automation MCP uses Playwright to control the ChatGPT web interface through browser automation. This approach provides reliable cross-platform support and avoids the limitations of desktop app automation.
+The ChatGPT Automation MCP uses Playwright to control the ChatGPT web interface through browser automation. By default, it connects to an existing Chrome instance via CDP (Chrome DevTools Protocol) to bypass Cloudflare protection.
+
+### Why CDP Mode?
+
+- **Cloudflare Bypass**: Connects to your real browser with authenticated session
+- **No Automation Flags**: Uses your actual Chrome profile without detection
+- **Session Persistence**: Leverages existing cookies and login state
+- **Real User Context**: Maintains authentic browser fingerprint
 
 ## Core Components
 
@@ -25,11 +32,21 @@ The ChatGPT Automation MCP uses Playwright to control the ChatGPT web interface 
 
 ### Browser Automation Strategy
 
-We use Playwright because:
+We use Playwright with CDP connection because:
+- **Cloudflare Protection**: CDP mode bypasses anti-automation detection
 - **Cross-platform**: Works on macOS, Linux, Windows
-- **Reliable selectors**: CSS and accessibility-based element selection
-- **Session persistence**: Maintain login state across runs
-- **Headless support**: Can run without GUI for CI/CD
+- **Reliable selectors**: CSS and accessibility-based element selection  
+- **Session persistence**: Uses existing browser session
+- **Fallback Support**: Can launch new browser if CDP unavailable
+
+### CDP vs Standard Mode
+
+| Feature | CDP Mode | Standard Mode |
+|---------|----------|---------------|
+| Cloudflare Protection | ✅ Bypassed | ❌ Blocked |
+| Uses Existing Session | ✅ Yes | ❌ No |
+| Requires Chrome Running | ✅ Yes | ❌ No |
+| Automation Detection | ✅ Hidden | ❌ Visible |
 
 ### Key Challenges Solved
 

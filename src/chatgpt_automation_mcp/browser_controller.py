@@ -37,6 +37,7 @@ class ChatGPTBrowserController:
         self.playwright = None
         self.config = Config()
         self.error_recovery: ChatGPTErrorRecovery | None = None
+        self.is_cdp_connection = False
 
     async def __aenter__(self):
         await self.launch()
@@ -55,29 +56,71 @@ class ChatGPTBrowserController:
             logger.info("Launching browser...")
             self.playwright = await async_playwright().start()
 
-            # Browser launch options
-            launch_options = {
-                "headless": self.config.HEADLESS,
-                "args": ["--no-sandbox"] if self.config.HEADLESS else [],
-            }
+            # Try CDP connection first if enabled
+            if self.config.USE_CDP:
+                try:
+                    logger.info(f"Attempting CDP connection to {self.config.CDP_URL}")
+                    self.browser = await self.playwright.chromium.connect_over_cdp(
+                        self.config.CDP_URL
+                    )
+                    # Get existing contexts
+                    contexts = self.browser.contexts
+                    if contexts:
+                        self.context = contexts[0]
+                        pages = self.context.pages
+                        # Find ChatGPT tab or create new one
+                        chatgpt_page = None
+                        for page in pages:
+                            if "chatgpt.com" in page.url or "chat.openai.com" in page.url:
+                                chatgpt_page = page
+                                break
+                        
+                        if chatgpt_page:
+                            self.page = chatgpt_page
+                            logger.info("Connected to existing ChatGPT tab")
+                        else:
+                            self.page = await self.context.new_page()
+                            logger.info("Created new tab in existing browser")
+                    else:
+                        # No contexts, create one
+                        self.context = await self.browser.new_context()
+                        self.page = await self.context.new_page()
+                        logger.info("Created new context in CDP browser")
+                    
+                    logger.info("Successfully connected via CDP")
+                    self.is_cdp_connection = True
+                except Exception as e:
+                    logger.warning(f"CDP connection failed: {e}, falling back to regular launch")
+                    # Fall through to regular launch
+                    self.browser = None
+                    self.context = None
+                    self.page = None
+            
+            # Regular launch if CDP not used or failed
+            if not self.browser:
+                # Browser launch options
+                launch_options = {
+                    "headless": self.config.HEADLESS,
+                    "args": ["--no-sandbox"] if self.config.HEADLESS else [],
+                }
 
-            # Context options for session persistence
-            context_options = {
-                "locale": "en-US",
-                "timezone_id": "America/New_York",
-                "viewport": {"width": 1280, "height": 800},
-            }
+                # Context options for session persistence
+                context_options = {
+                    "locale": "en-US",
+                    "timezone_id": "America/New_York",
+                    "viewport": {"width": 1280, "height": 800},
+                }
 
-            # Load existing session if available
-            if self.config.PERSIST_SESSION:
-                session_path = self.config.SESSION_DIR / f"{self.config.SESSION_NAME}.json"
-                if session_path.exists():
-                    logger.info(f"Loading session from {session_path}")
-                    context_options["storage_state"] = str(session_path)
+                # Load existing session if available
+                if self.config.PERSIST_SESSION:
+                    session_path = self.config.SESSION_DIR / f"{self.config.SESSION_NAME}.json"
+                    if session_path.exists():
+                        logger.info(f"Loading session from {session_path}")
+                        context_options["storage_state"] = str(session_path)
 
-            self.browser = await self.playwright.chromium.launch(**launch_options)
-            self.context = await self.browser.new_context(**context_options)
-            self.page = await self.context.new_page()
+                self.browser = await self.playwright.chromium.launch(**launch_options)
+                self.context = await self.browser.new_context(**context_options)
+                self.page = await self.context.new_page()
 
             # Navigate to ChatGPT
             logger.info("Navigating to ChatGPT...")
@@ -117,19 +160,28 @@ class ChatGPTBrowserController:
 
     async def close(self) -> None:
         """Close browser and cleanup"""
-        if self.config.PERSIST_SESSION and self.context:
+        # Save session if not using CDP (CDP uses existing browser session)
+        if self.config.PERSIST_SESSION and self.context and not self.config.USE_CDP:
             session_path = self.config.SESSION_DIR / f"{self.config.SESSION_NAME}.json"
             logger.info(f"Saving session to {session_path}")
             await self.context.storage_state(path=str(session_path))
 
-        if self.page:
-            await self.page.close()
-        if self.context:
-            await self.context.close()
-        if self.browser:
-            await self.browser.close()
-        if self.playwright:
-            await self.playwright.stop()
+        # For CDP connections, we don't close the browser (it's the user's main browser)
+        if self.is_cdp_connection:
+            logger.info("CDP mode: Keeping browser open (user's main browser)")
+            # Just disconnect, don't close anything
+            if self.playwright:
+                await self.playwright.stop()
+        else:
+            # Normal cleanup for standalone browser
+            if self.page:
+                await self.page.close()
+            if self.context:
+                await self.context.close()
+            if self.browser:
+                await self.browser.close()
+            if self.playwright:
+                await self.playwright.stop()
 
         self.page = None
         self.context = None

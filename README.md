@@ -27,9 +27,29 @@ uv sync
 # Or install with pip
 pip install -e .
 
-# Install Playwright browsers
+# Install Playwright browsers (only needed if not using CDP)
 uv run playwright install chromium
 ```
+
+### Chrome Setup for CDP Mode (Recommended)
+
+To bypass Cloudflare protection, we connect to your existing Chrome browser:
+
+1. **Launch Chrome with debugging port**:
+   ```bash
+   # macOS
+   /Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome --remote-debugging-port=9222
+   
+   # Windows
+   "C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222
+   
+   # Linux
+   google-chrome --remote-debugging-port=9222
+   ```
+
+2. **Login to ChatGPT** in the browser window that opens
+
+3. **Keep Chrome running** while using the MCP server
 
 ## Configuration
 

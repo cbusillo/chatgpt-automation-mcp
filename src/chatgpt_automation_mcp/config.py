@@ -46,6 +46,10 @@ class Config:
     # Session management
     PERSIST_SESSION: bool = os.getenv("PERSIST_SESSION", "true").lower() == "true"
     SESSION_NAME: str = os.getenv("SESSION_NAME", "default")
+    
+    # CDP Connection settings
+    USE_CDP: bool = os.getenv("USE_CDP", "true").lower() == "true"
+    CDP_URL: str = os.getenv("CDP_URL", "http://127.0.0.1:9222")
 
     @classmethod
     def ensure_directories(cls):
