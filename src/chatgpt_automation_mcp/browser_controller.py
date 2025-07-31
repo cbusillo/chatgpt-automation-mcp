@@ -568,6 +568,67 @@ class ChatGPTBrowserController:
             logger.error(f"Failed to upload file: {e}")
             return False
 
+    async def regenerate_response(self) -> bool:
+        """Regenerate the last response from ChatGPT"""
+        if not self.page:
+            await self.launch()
+
+        try:
+            # Look for regenerate button - ChatGPT shows this after a response
+            regenerate_selectors = [
+                'button[aria-label*="Regenerate"]',
+                'button:has-text("Regenerate")',
+                'button:has-text("Regenerate response")',
+                '[data-testid="regenerate-button"]',
+                'button:has(svg[aria-label*="regenerate"])',
+                # Sometimes it's in a menu
+                'button[aria-label*="More"]',
+                'button[aria-label="ChatGPT options"]',
+            ]
+
+            for selector in regenerate_selectors:
+                try:
+                    element = self.page.locator(selector).first
+                    if await element.count() > 0 and await element.is_visible():
+                        # If it's the "More" menu, click it first
+                        if "More" in selector or "options" in selector:
+                            await element.click()
+                            await asyncio.sleep(0.5)
+
+                            # Look for regenerate in dropdown
+                            dropdown_regenerate = self.page.locator('button:has-text("Regenerate")')
+                            if await dropdown_regenerate.count() > 0:
+                                await dropdown_regenerate.first.click()
+                                logger.info("Clicked regenerate in dropdown menu")
+                                return True
+                        else:
+                            # Direct regenerate button
+                            await element.click()
+                            logger.info("Clicked regenerate button")
+                            return True
+                except Exception as e:
+                    logger.debug(f"Failed with selector {selector}: {e}")
+                    continue
+
+            # Alternative: Try keyboard shortcut if available
+            # Some versions of ChatGPT support Ctrl+R or similar
+            try:
+                await self.page.keyboard.press("Control+r")
+                await asyncio.sleep(0.5)
+                # Check if regeneration started (thinking animation)
+                if await self._is_responding():
+                    logger.info("Triggered regeneration via keyboard shortcut")
+                    return True
+            except Exception:
+                pass
+
+            logger.warning("Regenerate button not found")
+            return False
+
+        except Exception as e:
+            logger.error(f"Failed to regenerate response: {e}")
+            return False
+
 
 # Test function for direct execution
 def test_browser_controller():

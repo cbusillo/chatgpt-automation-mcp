@@ -83,6 +83,7 @@ Add to your Claude desktop configuration:
 - `chatgpt_wait_response` - Wait for response completion
 - `chatgpt_toggle_search` - Enable/disable web search mode
 - `chatgpt_upload_file` - Upload a file to the conversation
+- `chatgpt_regenerate` - Regenerate the last response
 
 ### Example Usage
 

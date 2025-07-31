@@ -166,6 +166,11 @@ async def list_tools() -> list[Tool]:
                 "required": ["file_path"],
             },
         ),
+        Tool(
+            name="chatgpt_regenerate",
+            description="Regenerate the last response from ChatGPT",
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
     ]
 
 
@@ -261,6 +266,14 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
                 return [TextContent(type="text", text=f"File uploaded successfully: {file_path}")]
             else:
                 return [TextContent(type="text", text=f"Failed to upload file: {file_path}")]
+
+        elif name == "chatgpt_regenerate":
+            success = await ctrl.regenerate_response()
+
+            if success:
+                return [TextContent(type="text", text="Response regeneration initiated")]
+            else:
+                return [TextContent(type="text", text="Failed to regenerate response")]
 
         else:
             raise McpError(ErrorData(code=-32601, message=f"Unknown tool: {name}"))
