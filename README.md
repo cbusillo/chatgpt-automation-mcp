@@ -33,22 +33,62 @@ uv run playwright install chromium
 
 ### Chrome Setup for CDP Mode (Recommended)
 
-To bypass Cloudflare protection, we use a copy of your Chrome profile with remote debugging enabled:
+**⚠️ CRITICAL**: Chrome does NOT allow `--remote-debugging-port` on the default profile for security reasons. We must use a separate profile copy.
 
-1. **The MCP will automatically create a Chrome profile copy** at:
+#### Automatic Profile Management
+
+The MCP automatically manages a dedicated Chrome profile for automation:
+
+1. **Profile Location**:
    - macOS: `~/Library/Application Support/Google/Chrome-Automation`
    - Windows: `%LOCALAPPDATA%\Google\Chrome-Automation`
    - Linux: `~/.config/google-chrome-automation`
 
-2. **First time setup**: The MCP will copy your default Chrome profile to preserve logins
+2. **First-time Setup**:
+   - MCP copies your default Chrome profile to preserve logins
+   - ChatGPT session and bookmarks are maintained
+   - Profile runs independently of your main Chrome
 
-3. **Chrome will launch automatically** with debugging enabled when you use the MCP
+3. **Automatic Launch**:
+   - Chrome launches with `--remote-debugging-port=9222`
+   - Navigates directly to ChatGPT
+   - Maintains persistent login state
 
-4. **Keep Chrome running** while using the MCP server
+#### Troubleshooting Profile Issues
 
-**Important**: When uninstalling, remember to delete the Chrome-Automation profile directory to free up disk space.
+**If Chrome opens to a folder listing instead of ChatGPT:**
 
-**Note**: The debugging port allows the MCP to control Chrome. This is safe for local use only.
+1. **Delete the automation profile**:
+   ```bash
+   # macOS
+   rm -rf ~/Library/Application\ Support/Google/Chrome-Automation
+   
+   # Windows
+   rmdir /s "%LOCALAPPDATA%\Google\Chrome-Automation"
+   
+   # Linux
+   rm -rf ~/.config/google-chrome-automation
+   ```
+
+2. **Restart the MCP** - it will recreate the profile from your current default profile
+
+3. **Login to ChatGPT** in the new automation browser window
+
+**Profile becomes corrupted:**
+- Same solution as above - delete and recreate
+- The MCP will always copy from your current default profile
+
+**Why This Architecture?**
+- **Security**: Chrome blocks debugging on default profiles
+- **Isolation**: Automation doesn't interfere with regular browsing  
+- **Persistence**: Maintains ChatGPT login across sessions
+- **Recovery**: Easy to reset by deleting automation profile
+
+**Important Notes**:
+- Keep Chrome running while using the MCP server
+- Profile uses ~100-500MB disk space (copy of your default profile)
+- Safe for local use only - debugging port is localhost-only
+- When uninstalling, delete Chrome-Automation directory to free space
 
 ## Configuration
 
@@ -281,26 +321,60 @@ The MCP server includes comprehensive error handling and automatic recovery for 
 
 ## Troubleshooting
 
+### Chrome Profile Issues (Most Common)
+
+**Problem**: Chrome opens to folder listing instead of ChatGPT
+```
+Folder: file:///Users/user/Library/Application Support/Google/Chrome-Automation/
+```
+
+**Solution**:
+```bash
+# Delete corrupted automation profile
+rm -rf ~/Library/Application\ Support/Google/Chrome-Automation  # macOS
+rmdir /s "%LOCALAPPDATA%\Google\Chrome-Automation"              # Windows
+rm -rf ~/.config/google-chrome-automation                       # Linux
+
+# Restart MCP - it will recreate the profile
+```
+
+**Problem**: "Not logged in to ChatGPT" after profile reset
+- **Expected behavior** on first run with new profile
+- Login once in the automation browser window
+- Session will persist for future runs
+
+**Problem**: Browser won't launch or connect
+- Check if port 9222 is already in use: `lsof -i :9222` (macOS/Linux)
+- Close existing Chrome debugging sessions
+- Restart the MCP server
+
 ### Login Issues
-- Ensure credentials are set in `.env`
+- Credentials in `.env` are optional (profile usually maintains login)
 - Try with `HEADLESS=false` to debug visually
-- Check if browser session is persisted correctly
+- Check if automation profile has valid ChatGPT session
 
 ### Response Detection
 - The tool waits for ChatGPT's thinking animation to complete
-- Increase timeout for complex queries or reasoning models
-- Enable debug mode for detailed logs
+- Increase timeout for complex queries or reasoning models (o3-pro can take 60+ minutes!)
+- Enable debug mode with `CHATGPT_LOG_LEVEL=DEBUG`
 
 ### Model Selection
 - Not all models may be available to your account
-- O3 models require Pro subscription
+- O3 models require ChatGPT Pro subscription
 - Model names are case-sensitive
+- Some models may be in "More models" menu
+
+### Auto-Enable Web Search Issues
+- Feature only works with `chatgpt_send_and_get_response` tool
+- Check message contains research keywords: `latest`, `current`, `research`, etc.
+- Web search may already be enabled (not an error)
 
 ### Error Recovery
 - Error recovery is automatic and logged at INFO level
-- Set logging level to DEBUG for detailed recovery information
+- Set `CHATGPT_LOG_LEVEL=DEBUG` for detailed recovery information
 - Recovery attempts are limited to prevent infinite loops
 - Browser restart is the ultimate fallback for persistent issues
+- **Chrome profile reset** is the most effective solution for persistent issues
 
 ## Security
 

@@ -18,14 +18,54 @@ MCP server for automating ChatGPT web interface via Playwright. Handles browser 
 - **[README.md](README.md)** - Installation, usage, API reference
 - **[docs/DEVELOPMENT_BEST_PRACTICES.md](docs/DEVELOPMENT_BEST_PRACTICES.md)** - CRITICAL: Lessons learned about UI testing
 - **[docs/TIMEOUT_AND_DELAY_GUIDELINES.md](docs/TIMEOUT_AND_DELAY_GUIDELINES.md)** - Model-specific timeouts
+- **[docs/CHROME_PROFILE_MANAGEMENT.md](docs/CHROME_PROFILE_MANAGEMENT.md)** - CRITICAL: Chrome profile troubleshooting
 
 ## 🚨 Critical Rules for This Project
 
-### 0. Chrome Profile Management
-Chrome does NOT allow `--remote-debugging-port` on the default profile. The browser controller automatically:
-- Uses `~/Library/Application Support/Google/Chrome-Automation` profile
-- If issues arise, delete this directory and copy from the default Chrome profile
-- This maintains login state while allowing debugging
+### 0. Chrome Profile Management (CRITICAL)
+
+**Why Separate Profile Required:**
+Chrome security prevents `--remote-debugging-port` on default profiles. Attempting to use default profile results in Chrome opening folder listings instead of web pages.
+
+**Automatic Management:**
+- **Location**: `~/Library/Application Support/Google/Chrome-Automation` (macOS)
+- **Creation**: Browser controller copies default profile on first run
+- **Purpose**: Maintains ChatGPT login while enabling debugging
+
+**Common Issues & Solutions:**
+
+1. **Chrome opens folder listing instead of ChatGPT**:
+   ```bash
+   # Root cause: Profile corruption or incorrect command line args
+   rm -rf ~/Library/Application\ Support/Google/Chrome-Automation
+   # MCP will recreate from current default profile
+   ```
+
+2. **"Not logged in" after profile recreation**:
+   - Expected on first run with new profile
+   - Login to ChatGPT in automation browser
+   - Session persists for future runs
+
+3. **Command line argument parsing issues**:
+   - Paths with spaces must be properly quoted in shell commands
+   - Browser controller uses shell=True on macOS for proper path handling
+   - Incorrect: `--user-data-dir /path with spaces/` → Opens folder as file
+   - Correct: `--user-data-dir "/path with spaces/"` → Uses as profile
+
+**Technical Implementation:**
+```python
+# macOS shell command approach (handles spaces)
+cmd = f'"{chrome_path}" --remote-debugging-port={port} --user-data-dir="{user_data_dir}" "https://chatgpt.com"'
+subprocess.Popen(cmd, shell=True)
+
+# NOT: args list approach (fails with spaces)
+args = [chrome_path, f"--user-data-dir={user_data_dir}"]  # Breaks on spaces
+```
+
+**Profile Recovery:**
+- Always delete automation profile, never try to fix in-place
+- MCP creates fresh copy from current default profile
+- Preserves latest login state and preferences
 
 ### 1. Always Verify with Screenshots
 ```python
