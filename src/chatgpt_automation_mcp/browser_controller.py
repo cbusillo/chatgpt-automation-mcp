@@ -301,31 +301,31 @@ class ChatGPTBrowserController:
             
             # Launch Chrome with debugging port using default profile
             port = self.config.CDP_URL.split(':')[-1]
-            cmd = [chrome_path, f"--remote-debugging-port={port}"]
             
             # Explicitly specify the default Chrome profile location
             if system == "Darwin":
                 # macOS Chrome automation profile location
                 user_data_dir = os.path.expanduser("~/Library/Application Support/Google/Chrome-Automation")
+                # Use shell command to handle spaces properly
+                cmd = f'"{chrome_path}" --remote-debugging-port={port} --user-data-dir="{user_data_dir}" "https://chatgpt.com"'
+                use_shell = True
+            else:
+                # For Windows and Linux, use list format
+                cmd = [chrome_path, f"--remote-debugging-port={port}"]
+                if system == "Windows":
+                    user_data_dir = os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\User Data")
+                else:  # Linux
+                    user_data_dir = os.path.expanduser("~/.config/google-chrome")
                 cmd.extend(["--user-data-dir", user_data_dir])
-            elif system == "Windows":
-                # Windows default Chrome profile location
-                user_data_dir = os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\User Data")
-                cmd.extend(["--user-data-dir", user_data_dir])
-            elif system == "Linux":
-                # Linux default Chrome profile location
-                user_data_dir = os.path.expanduser("~/.config/google-chrome")
-                cmd.extend(["--user-data-dir", user_data_dir])
+                cmd.append("https://chatgpt.com")
+                use_shell = False
             
             logger.info(f"Launching Chrome with debugging port using profile: {user_data_dir}")
             
-            # Launch Chrome with ChatGPT URL directly
-            cmd.append("https://chatgpt.com")
-            
             # Log the exact command being run
-            logger.info(f"Running command: {' '.join(cmd)}")
+            logger.info(f"Running command: {cmd if isinstance(cmd, str) else ' '.join(cmd)}")
             
-            process = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            process = subprocess.Popen(cmd, shell=use_shell, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             logger.info("Chrome launched with debugging port")
             
             # Wait for Chrome to be ready

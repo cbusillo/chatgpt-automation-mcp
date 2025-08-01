@@ -14,21 +14,21 @@ def get_default_timeout(model: str = None, mode: str = None, operation: str = "r
     Returns:
         Timeout in seconds
     """
-    # Deep Research mode needs extended timeout
+    # Deep Research mode: Real data shows up to 2 hours worst case
     if mode and "deep_research" in mode.lower():
-        return 1800  # 30 minutes
+        return 7200  # 2 hours (users report 2-6 hour waits)
     
-    # Model-specific timeouts
+    # Model-specific timeouts (based on REAL user reports with web search)
     if model:
         model_lower = model.lower()
         
-        # o3-pro: Can take 20-30 minutes with queue + thinking + response
+        # o3-pro: SLOWEST - Users report up to 20 minutes + queue time
         if "o3-pro" in model_lower or "o3 pro" in model_lower:
-            return 1800  # 30 minutes
+            return 3600  # 60 minutes (pro is slower than standard o3!)
         
-        # o3: Can think for 5-10 minutes
+        # o3: Can take up to 14 min thinking time + queue
         elif "o3" in model_lower and "mini" not in model_lower:
-            return 600  # 10 minutes
+            return 1200  # 20 minutes (standard o3 is faster than pro)
         
         # GPT-4.1: Large context processing
         elif "gpt-4.1" in model_lower or "gpt 4.1" in model_lower:
