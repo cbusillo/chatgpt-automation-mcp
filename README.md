@@ -216,6 +216,7 @@ uv run python tests/test_functional.py
 # Or use the test runner script
 uv run run-tests --unit        # Unit tests only
 uv run run-tests --integration # Integration tests (requires browser)
+uv run run-tests --auto-enable # Auto-enable web search tests (fast, no browser needed)
 uv run run-tests --all         # All tests
 uv run run-tests --coverage    # With coverage report
 ```
@@ -225,6 +226,9 @@ uv run run-tests --coverage    # With coverage report
 - `tests/test_browser_controller.py` - Unit tests with mocked browser
 - `tests/test_integration.py` - Integration tests with real browser
 - `tests/test_functional.py` - Quick smoke test for basic functionality
+- `tests/test_auto_enable_search.py` - Auto-enable web search keyword detection tests
+- `tests/test_server_auto_enable.py` - Server integration tests for auto-enable feature
+- `tests/test_web_search_verification.py` - Visual verification tests with screenshots
 - `run_tests.py` - Test runner with various options
 
 ### Code Quality

@@ -24,6 +24,26 @@ def run_integration_tests():
     return result.returncode == 0
 
 
+def run_auto_enable_tests():
+    """Run auto-enable web search tests"""
+    print("\n=== Running Auto-Enable Web Search Tests ===")
+    success = True
+    
+    # Run keyword detection tests
+    cmd = [sys.executable, "tests/test_auto_enable_search.py"]
+    result = subprocess.run(cmd)
+    if result.returncode != 0:
+        success = False
+    
+    # Run server integration tests  
+    cmd = [sys.executable, "tests/test_server_auto_enable.py"]
+    result = subprocess.run(cmd)
+    if result.returncode != 0:
+        success = False
+        
+    return success
+
+
 def run_specific_test(test_name):
     """Run a specific test by name"""
     print(f"\n=== Running Test: {test_name} ===")
@@ -76,11 +96,16 @@ def main():
         action="store_true",
         help="Run all tests (unit + integration)"
     )
+    parser.add_argument(
+        "--auto-enable",
+        action="store_true",
+        help="Run auto-enable web search tests"
+    )
     
     args = parser.parse_args()
     
     # Default to unit tests if nothing specified
-    if not any([args.integration, args.unit, args.coverage, args.test, args.all]):
+    if not any([args.integration, args.unit, args.coverage, args.test, args.all, getattr(args, 'auto_enable', False)]):
         args.unit = True
     
     success = True
@@ -91,6 +116,8 @@ def main():
         success = run_coverage()
     elif args.all:
         success = run_unit_tests() and run_integration_tests()
+    elif getattr(args, 'auto_enable', False):
+        success = run_auto_enable_tests()
     else:
         if args.unit:
             success = run_unit_tests()
