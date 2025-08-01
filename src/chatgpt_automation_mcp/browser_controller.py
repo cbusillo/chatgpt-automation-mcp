@@ -1139,11 +1139,16 @@ class ChatGPTBrowserController:
                 await tools_button.click(force=True)
                 await asyncio.sleep(0.5)  # Wait for menu
                 
-                # Now find Web search option - it's a div in the menu
+                # Now find Web search option - might be called "Web search" or "Connected apps"
                 search_option = self.page.locator('div[role="menu"] div:has-text("Web search")').first
                 if await search_option.count() == 0:
-                    # Try more specific selector
+                    # Try "Connected apps" (new UI)
+                    search_option = self.page.locator('div[role="menu"] div:has-text("Connected apps")').first
+                if await search_option.count() == 0:
+                    # Try more specific selectors
                     search_option = self.page.locator('div:text-is("Web search")').first
+                if await search_option.count() == 0:
+                    search_option = self.page.locator('div:text-is("Connected apps")').first
                     
                 if await search_option.count() > 0 and await search_option.is_visible():
                     # Web search is a toggle - clicking it enables/disables
@@ -1156,10 +1161,10 @@ class ChatGPTBrowserController:
                     )
                     # Small wait for any remaining transitions
                     await self.page.wait_for_timeout(500)
-                    logger.info(f"Toggled web search mode")
+                    logger.info(f"Toggled web search/connected apps mode")
                     return True
                 else:
-                    logger.warning("Web search option not found in Tools menu")
+                    logger.warning("Web search/Connected apps option not found in Tools menu")
                     return False
             else:
                 logger.warning("Tools button not found")
