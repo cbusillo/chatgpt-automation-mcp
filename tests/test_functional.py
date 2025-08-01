@@ -70,7 +70,7 @@ async def test_functional():
         print("\n9. Testing sidebar toggle...")
         original_state = await controller.is_sidebar_open()
         await controller.toggle_sidebar(not original_state)
-        await asyncio.sleep(1)
+        await asyncio.sleep(get_delay("ui_update"))
         new_state = await controller.is_sidebar_open()
         print(f"✓ Sidebar toggled from {original_state} to {new_state}")
         

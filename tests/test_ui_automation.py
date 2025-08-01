@@ -85,7 +85,7 @@ async def test_model_selection():
                 else:
                     print(f"  ℹ️ {model} not available (expected for most users)")
                 
-                await asyncio.sleep(1)
+                await asyncio.sleep(get_delay("ui_update"))
                 
             except Exception as e:
                 print(f"  ℹ️ {model} not available: {str(e)}")
@@ -178,7 +178,7 @@ async def test_advanced_features():
         # Test response timing with o3
         print("\n⏱️ Testing response timing with reasoning model...")
         await controller.select_model("o3")
-        await asyncio.sleep(1)
+        await asyncio.sleep(get_delay("ui_update"))
         
         import time
         start_time = time.time()

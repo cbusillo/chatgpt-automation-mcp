@@ -119,7 +119,7 @@ async def test_model_detection():
             else:
                 print(f"  ❌ Failed to select {model}")
             
-            await asyncio.sleep(1)
+            await asyncio.sleep(get_delay("ui_update"))
         
     finally:
         await controller.close()

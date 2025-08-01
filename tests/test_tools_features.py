@@ -124,9 +124,7 @@ async def test_tools_menu_interaction():
             # Open menu
             print("  Opening Tools menu...")
             await tools_button.click(force=True)
-            await asyncio.sleep(0.5)
-            
-            # Check menu contents
+            await asyncio.sleep(get_delay("menu_open"))  # Wait for menu contents
             menu_text = await controller.page.locator('div[role="menu"]').text_content()
             print(f"  Menu contains: Web search: {'✅' if 'Web search' in menu_text else '❌'}")
             print(f"  Menu contains: Deep research: {'✅' if 'Deep research' in menu_text else '❌'}")

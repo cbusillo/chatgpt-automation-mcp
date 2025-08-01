@@ -19,6 +19,8 @@ from playwright.async_api import (
     TimeoutError as PlaywrightTimeout,
 )
 
+from .animation_config import get_delay
+
 try:
     from .config import Config
     from .error_recovery import ChatGPTErrorRecovery
@@ -102,7 +104,7 @@ class ChatGPTBrowserController:
                     # Try to launch Chrome with debugging
                     if await self._launch_chrome_with_debugging():
                         # Wait a bit for Chrome to start
-                        await asyncio.sleep(5)
+                        await asyncio.sleep(get_delay("browser_startup"))
                         
                         # Try CDP connection again
                         try:
@@ -279,7 +281,7 @@ class ChatGPTBrowserController:
                     end tell
                     '''
                     subprocess.run(['osascript', '-e', quit_chrome], capture_output=True)
-                    await asyncio.sleep(2)  # Give Chrome time to close
+                    await asyncio.sleep(get_delay("browser_close"))  # Give Chrome time to close
             elif system == "Windows":
                 # Check if Chrome is running
                 result = subprocess.run(['tasklist', '/FI', 'IMAGENAME eq chrome.exe'], capture_output=True, text=True)
@@ -288,7 +290,7 @@ class ChatGPTBrowserController:
                 if chrome_running:
                     logger.info("Chrome is running without debugging port, closing it...")
                     subprocess.run(['taskkill', '/F', '/IM', 'chrome.exe'], capture_output=True)
-                    await asyncio.sleep(2)
+                    await asyncio.sleep(get_delay("browser_close"))
             elif system == "Linux":
                 # Check if Chrome is running
                 result = subprocess.run(['pgrep', '-f', 'chrome'], capture_output=True)
@@ -297,7 +299,7 @@ class ChatGPTBrowserController:
                 if chrome_running:
                     logger.info("Chrome is running without debugging port, closing it...")
                     subprocess.run(['pkill', '-f', 'chrome'], capture_output=True)
-                    await asyncio.sleep(2)
+                    await asyncio.sleep(get_delay("browser_close"))
             
             # Launch Chrome with debugging port using default profile
             port = self.config.CDP_URL.split(':')[-1]
@@ -329,7 +331,7 @@ class ChatGPTBrowserController:
             logger.info("Chrome launched with debugging port")
             
             # Wait for Chrome to be ready
-            await asyncio.sleep(3)
+            await asyncio.sleep(get_delay("browser_ready"))
             return True
             
         except Exception as e:
@@ -853,7 +855,7 @@ class ChatGPTBrowserController:
                 model_button = self.page.locator('[data-testid="model-switcher-dropdown-button"]').first
                 if await model_button.count() > 0 and await model_button.is_visible():
                     await model_button.click()
-                    await asyncio.sleep(0.5)
+                    await asyncio.sleep(get_delay("click_delay"))
                     clicked = True
                     logger.info("Opened model picker with data-testid selector")
             except Exception:
@@ -874,7 +876,7 @@ class ChatGPTBrowserController:
             logger.warning("Model menu did not appear")
             return False
             
-        await asyncio.sleep(0.5)  # Small delay for animation
+        await asyncio.sleep(get_delay("model_picker_open"))  # Small delay for animation
 
         # Model name mapping based on actual ChatGPT UI (Jan 2025)
         model_map = {
@@ -917,11 +919,11 @@ class ChatGPTBrowserController:
                     if await more_button.count() > 0 and await more_button.is_visible():
                         # Try hovering first (some menus require hover)
                         await more_button.hover()
-                        await asyncio.sleep(0.3)
+                        await asyncio.sleep(get_delay("hover_delay"))
                         
                         # Now click
                         await more_button.click()
-                        await asyncio.sleep(1.0)  # Wait for submenu animation
+                        await asyncio.sleep(get_delay("more_models_menu"))  # Wait for submenu animation
                         more_clicked = True
                         logger.info(f"Clicked 'More models' submenu with selector: {selector}")
                         break
@@ -959,14 +961,14 @@ class ChatGPTBrowserController:
                         # For More models submenu items, might need to wait for them to be clickable
                         if needs_more_menu:
                             await option.hover()
-                            await asyncio.sleep(0.2)
+                            await asyncio.sleep(get_delay("hover_quick"))
                         
                         await option.click()
-                        await asyncio.sleep(1.5)  # Increased wait for selection to apply
+                        await asyncio.sleep(get_delay("model_selection"))  # Increased wait for selection to apply
 
                         # Verify selection with retry
                         for retry in range(3):
-                            await asyncio.sleep(0.5)
+                            await asyncio.sleep(get_delay("click_delay"))
                             new_model = await self.get_current_model()
                             if new_model:
                                 # Check if the selected model matches (handle variations)
@@ -1081,7 +1083,7 @@ class ChatGPTBrowserController:
                 open_button = self.page.locator('[aria-label="Open sidebar"]').first
                 if await open_button.count() > 0 and await open_button.is_visible():
                     await open_button.click()
-                    await asyncio.sleep(1.0)  # Increased wait for animation
+                    await asyncio.sleep(get_delay("sidebar_animation"))  # Wait for animation
                     logger.info("Opened sidebar")
                     return True
             else:
@@ -1089,7 +1091,7 @@ class ChatGPTBrowserController:
                 close_button = self.page.locator('[data-testid="close-sidebar-button"]').first
                 if await close_button.count() > 0 and await close_button.is_visible():
                     await close_button.click()
-                    await asyncio.sleep(1.0)  # Increased wait for animation
+                    await asyncio.sleep(get_delay("sidebar_animation"))  # Wait for animation
                     logger.info("Closed sidebar")
                     return True
             
@@ -1151,7 +1153,7 @@ class ChatGPTBrowserController:
             if await tools_button.count() > 0 and await tools_button.is_visible():
                 # Force click to bypass interception
                 await tools_button.click(force=True)
-                await asyncio.sleep(0.5)  # Wait for menu
+                await asyncio.sleep(get_delay("menu_open"))  # Wait for menu
                 
                 # Find Web search option specifically (NOT Connected apps)
                 # Use exact text match to avoid confusion
@@ -1173,7 +1175,7 @@ class ChatGPTBrowserController:
                     await self.page.wait_for_timeout(500)
                     
                     # Verify the toggle worked by checking for "Search the web" text
-                    await asyncio.sleep(1)  # Give UI time to update
+                    await asyncio.sleep(get_delay("toggle_verify"))  # Give UI time to update
                     verification = await self.page.locator('text="Search the web"').count() > 0
                     
                     if verification and enable:
@@ -1224,7 +1226,7 @@ class ChatGPTBrowserController:
                 
             if await tools_button.count() > 0 and await tools_button.is_visible():
                 await tools_button.click(force=True)
-                await asyncio.sleep(0.5)  # Wait for menu
+                await asyncio.sleep(get_delay("menu_open"))  # Wait for menu
                 
                 # Now find Deep research option - use the exact selector that works
                 research_option = self.page.locator('div:text-is("Deep research")').first
@@ -1299,9 +1301,7 @@ class ChatGPTBrowserController:
                 
             if await tools_button.count() > 0 and await tools_button.is_visible():
                 await tools_button.click(force=True)
-                await asyncio.sleep(0.5)
-                
-                # Look for the quota text - appears as tooltip or in menu
+                await asyncio.sleep(get_delay("menu_open"))  # Wait for menu
                 if mode == "deep_research":
                     # Hover over Deep research to see tooltip
                     research_option = self.page.locator('div[role="menu"] div:has-text("Deep research")').first
@@ -1362,7 +1362,7 @@ class ChatGPTBrowserController:
                         await file_input.set_input_files(str(path))
 
                         # Wait a bit for upload to process
-                        await asyncio.sleep(1)
+                        await asyncio.sleep(get_delay("ui_update"))
 
                         logger.info(f"File uploaded: {path.name}")
                         return True
@@ -1391,7 +1391,7 @@ class ChatGPTBrowserController:
                         await file_chooser.set_files(str(path))
 
                         # Wait for upload
-                        await asyncio.sleep(1)
+                        await asyncio.sleep(get_delay("ui_update"))
 
                         logger.info(f"File uploaded via button: {path.name}")
                         return True
@@ -1436,7 +1436,7 @@ class ChatGPTBrowserController:
             
             if await model_button.count() > 0 and await model_button.is_visible():
                 await model_button.click()
-                await asyncio.sleep(0.5)  # Wait for menu to open
+                await asyncio.sleep(get_delay("menu_open"))  # Wait for menu to open
                 
                 # Look for "Try again" option in the dropdown
                 try_again_selectors = [
@@ -1765,9 +1765,7 @@ class ChatGPTBrowserController:
             
             if await options_button.count() > 0 and await options_button.is_visible():
                 await options_button.click()
-                await asyncio.sleep(0.5)
-                
-                # Look for delete option in menu
+                await asyncio.sleep(get_delay("menu_open"))  # Wait for menu
                 delete_option_selectors = [
                     'button:has-text("Delete")',
                     '[role="menuitem"]:has-text("Delete")',
@@ -1792,7 +1790,7 @@ class ChatGPTBrowserController:
                             conf_btn = self.page.locator(conf_sel).last  # Often in modal
                             if await conf_btn.count() > 0 and await conf_btn.is_visible():
                                 await conf_btn.click()
-                                await asyncio.sleep(1)
+                                await asyncio.sleep(get_delay("ui_update"))
                                 logger.info("Conversation deleted")
                                 return True
                         
@@ -1889,7 +1887,7 @@ class ChatGPTBrowserController:
             await edit_textarea.press("Enter")
             
             # Wait for the edit to process
-            await asyncio.sleep(1)
+            await asyncio.sleep(get_delay("ui_update"))
             
             logger.info(f"Edited message at index {message_index}")
             return True

@@ -101,7 +101,7 @@ async def debug_model_picker_structure():
         picker_button = controller.page.locator('[data-testid="model-switcher-dropdown-button"]').first
         if await picker_button.count() > 0:
             await picker_button.click()
-            await asyncio.sleep(1)
+            await asyncio.sleep(get_delay("ui_update"))
             print("  ✅ Opened model picker")
             
             # Look for all menu items
@@ -139,12 +139,12 @@ async def debug_model_picker_structure():
                 
                 # Try hovering first
                 await more_models.hover()
-                await asyncio.sleep(0.5)
+                await asyncio.sleep(get_delay("click_delay"))
                 print("  Hovered over 'More models'")
                 
                 # Now click it
                 await more_models.click()
-                await asyncio.sleep(1)
+                await asyncio.sleep(get_delay("ui_update"))
                 print("  Clicked 'More models'")
                 
                 # Look for submenu items

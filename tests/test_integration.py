@@ -262,7 +262,7 @@ class TestChatGPTIntegration:
                 assert success is True
                 
                 # Switch back
-                await asyncio.sleep(1)
+                await asyncio.sleep(get_delay("ui_update"))
                 success = await controller.switch_conversation(test_conv[0])
                 assert success is True
             
