@@ -145,7 +145,7 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="chatgpt_toggle_search",
-            description="Enable or disable web search mode",
+            description="Enable or disable web search mode (automatically enabled by chatgpt_send_and_get_response for research keywords)",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -382,6 +382,26 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
         elif name == "chatgpt_send_and_get_response":
             message = arguments["message"]
             
+            # Auto-enable web search if message seems to need current info
+            research_keywords = [
+                "research", "latest", "current", "recent", "2025", "2024", "2026", 
+                "update", "new", "find", "search", "discover", "investigate",
+                "what's new", "recent changes", "current state", "up to date"
+            ]
+            message_lower = message.lower()
+            matching_keywords = [kw for kw in research_keywords if kw in message_lower]
+            
+            if matching_keywords:
+                logger.info(f"Auto-enabling web search due to keywords: {matching_keywords}")
+                try:
+                    search_enabled = await ctrl.toggle_search_mode(True)
+                    if search_enabled:
+                        logger.info("Web search auto-enabled successfully")
+                    else:
+                        logger.info("Web search auto-enable returned false (may already be enabled)")
+                except Exception as e:
+                    logger.warning(f"Failed to auto-enable web search: {e}")
+            
             # Get current model to determine appropriate timeout
             current_model = await ctrl.get_current_model()
             
@@ -426,8 +446,13 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
         elif name == "chatgpt_toggle_search":
             enable = arguments["enable"]
             success = await ctrl.toggle_search_mode(enable)
-            status = "enabled" if enable else "disabled"
-            result = f"Web search {status}" if success else "Failed to toggle web search"
+            if success:
+                status = "enabled" if enable else "disabled"
+                result = f"Web search {status} successfully"
+            else:
+                # Provide more helpful error message - web search might already be in desired state
+                current_state = "already enabled" if enable else "already disabled"
+                result = f"Web search toggle returned false - may be {current_state} or UI changed"
             return [TextContent(type="text", text=result)]
 
         elif name == "chatgpt_toggle_browsing":

@@ -95,7 +95,7 @@ Add to your Claude desktop configuration:
 - `chatgpt_launch` - Launch ChatGPT in browser
 - `chatgpt_new_chat` - Start a new conversation
 - `chatgpt_send_message` - Send a message
-- `chatgpt_send_and_get_response` - Send message and wait for response
+- `chatgpt_send_and_get_response` - Send message and wait for response (auto-enables web search for research keywords)
 - `chatgpt_get_last_response` - Get the most recent response
 - `chatgpt_get_conversation` - Get full conversation history
 - `chatgpt_select_model` - Switch to a different model
@@ -139,6 +139,32 @@ batch_result = await chatgpt_batch_operations(operations=[
 ])
 print(f"Batch completed: {batch_result['successful_operations']}/{batch_result['total_operations']} operations successful")
 ```
+
+## Smart Features
+
+### Auto-Enable Web Search
+
+The `chatgpt_send_and_get_response` tool automatically enables web search when your message contains research-related keywords:
+
+**Trigger Keywords:**
+- `research`, `latest`, `current`, `recent`, `2025`, `2024`, `2026`
+- `update`, `new`, `find`, `search`, `discover`, `investigate`
+- `what's new`, `recent changes`, `current state`, `up to date`
+
+**Example:**
+```python
+# This will automatically enable web search
+response = await chatgpt_send_and_get_response(
+    message="What are the latest Odoo 18 performance improvements?"
+)
+
+# This will not trigger auto-enable
+response = await chatgpt_send_and_get_response(
+    message="Write a Python function to sort a list"
+)
+```
+
+This ensures ChatGPT has access to current information for research queries, preventing hallucinated responses about recent developments.
 
 ## Available Models (July 2025)
 

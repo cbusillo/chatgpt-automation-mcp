@@ -18,7 +18,6 @@ MCP server for automating ChatGPT web interface via Playwright. Handles browser 
 - **[README.md](README.md)** - Installation, usage, API reference
 - **[docs/DEVELOPMENT_BEST_PRACTICES.md](docs/DEVELOPMENT_BEST_PRACTICES.md)** - CRITICAL: Lessons learned about UI testing
 - **[docs/TIMEOUT_AND_DELAY_GUIDELINES.md](docs/TIMEOUT_AND_DELAY_GUIDELINES.md)** - Model-specific timeouts
-- **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** - System design and component interaction
 
 ## 🚨 Critical Rules for This Project
 
@@ -88,6 +87,16 @@ Always use real data from actual usage, not documentation claims.
    - Create screenshot test first
    - Document expected UI state
    - Add fallback selectors
+
+## 🤖 Smart Auto-Features
+
+### Auto-Enable Web Search
+
+The MCP automatically enables web search when research keywords are detected in `chatgpt_send_and_get_response`:
+
+**Trigger Keywords**: `research`, `latest`, `current`, `recent`, `2025`, `2024`, `2026`, `update`, `new`, `find`, `search`, `discover`, `investigate`, `what's new`, `recent changes`, `current state`, `up to date`
+
+This prevents ChatGPT from hallucinating about recent developments (like o3 model capabilities) and ensures access to current information.
 
 ## 🚀 Quick Patterns
 
