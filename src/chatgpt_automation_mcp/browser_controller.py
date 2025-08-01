@@ -1125,6 +1125,20 @@ class ChatGPTBrowserController:
             await self.launch()
 
         try:
+            # First check if web search is already in desired state
+            # When enabled, the placeholder changes to "Search the web"
+            input_placeholder = self.page.locator('input[placeholder="Search the web"]').first
+            search_the_web_text = self.page.locator('text="Search the web"').first
+            
+            # Check current state
+            is_currently_enabled = False
+            if await input_placeholder.count() > 0 or await search_the_web_text.count() > 0:
+                is_currently_enabled = True
+                logger.info("Web search appears to be enabled (found 'Search the web' text)")
+            
+            if is_currently_enabled == enable:
+                logger.info(f"Web search already {'enabled' if enable else 'disabled'}")
+                return True
             # First, open the Tools menu - need to be more specific with selector
             # Based on error, the button has id="system-hint-button" and aria-label="Choose tool"
             tools_button = self.page.locator('button[aria-label="Choose tool"]').first
@@ -1139,16 +1153,12 @@ class ChatGPTBrowserController:
                 await tools_button.click(force=True)
                 await asyncio.sleep(0.5)  # Wait for menu
                 
-                # Now find Web search option - might be called "Web search" or "Connected apps"
-                search_option = self.page.locator('div[role="menu"] div:has-text("Web search")').first
+                # Find Web search option specifically (NOT Connected apps)
+                # Use exact text match to avoid confusion
+                search_option = self.page.locator('div[role="menu"] >> text="Web search"').first
                 if await search_option.count() == 0:
-                    # Try "Connected apps" (new UI)
-                    search_option = self.page.locator('div[role="menu"] div:has-text("Connected apps")').first
-                if await search_option.count() == 0:
-                    # Try more specific selectors
-                    search_option = self.page.locator('div:text-is("Web search")').first
-                if await search_option.count() == 0:
-                    search_option = self.page.locator('div:text-is("Connected apps")').first
+                    # Try alternative selector
+                    search_option = self.page.locator('div[role="menu"] div:text-is("Web search")').first
                     
                 if await search_option.count() > 0 and await search_option.is_visible():
                     # Web search is a toggle - clicking it enables/disables
@@ -1161,8 +1171,20 @@ class ChatGPTBrowserController:
                     )
                     # Small wait for any remaining transitions
                     await self.page.wait_for_timeout(500)
-                    logger.info(f"Toggled web search/connected apps mode")
-                    return True
+                    
+                    # Verify the toggle worked by checking for "Search the web" text
+                    await asyncio.sleep(1)  # Give UI time to update
+                    verification = await self.page.locator('text="Search the web"').count() > 0
+                    
+                    if verification and enable:
+                        logger.info("Successfully enabled web search - verified 'Search the web' is visible")
+                        return True
+                    elif not verification and not enable:
+                        logger.info("Successfully disabled web search")
+                        return True
+                    else:
+                        logger.warning(f"Web search toggle may have failed - expected {'enabled' if enable else 'disabled'} but verification {'passed' if verification else 'failed'}")
+                        return False
                 else:
                     logger.warning("Web search/Connected apps option not found in Tools menu")
                     return False
