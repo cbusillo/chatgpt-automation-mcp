@@ -22,6 +22,12 @@ MCP server for automating ChatGPT web interface via Playwright. Handles browser 
 
 ## 🚨 Critical Rules for This Project
 
+### 0. Chrome Profile Management
+Chrome does NOT allow `--remote-debugging-port` on the default profile. The browser controller automatically:
+- Uses `~/Library/Application Support/Google/Chrome-Automation` profile
+- If issues arise, delete this directory and copy from the default Chrome profile
+- This maintains login state while allowing debugging
+
 ### 1. Always Verify with Screenshots
 ```python
 # ❌ NEVER trust that a UI action worked
