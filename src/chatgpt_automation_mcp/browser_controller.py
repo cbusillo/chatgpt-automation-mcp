@@ -63,8 +63,12 @@ class ChatGPTBrowserController:
             if self.config.USE_CDP:
                 try:
                     logger.info(f"Attempting CDP connection to {self.config.CDP_URL}")
+                    # Use full URL with http:// prefix  
+                    cdp_url = self.config.CDP_URL
+                    if not cdp_url.startswith('http'):
+                        cdp_url = f"http://{cdp_url}"
                     self.browser = await self.playwright.chromium.connect_over_cdp(
-                        self.config.CDP_URL
+                        cdp_url
                     )
                     # Get existing contexts
                     contexts = self.browser.contexts
@@ -98,16 +102,42 @@ class ChatGPTBrowserController:
                     # Try to launch Chrome with debugging
                     if await self._launch_chrome_with_debugging():
                         # Wait a bit for Chrome to start
-                        await asyncio.sleep(3)
+                        await asyncio.sleep(5)
                         
                         # Try CDP connection again
                         try:
                             logger.info("Retrying CDP connection...")
+                            # Use full URL with http:// prefix  
+                            cdp_url = self.config.CDP_URL
+                            if not cdp_url.startswith('http'):
+                                cdp_url = f"http://{cdp_url}"
                             self.browser = await self.playwright.chromium.connect_over_cdp(
-                                self.config.CDP_URL
+                                cdp_url
                             )
-                            self.context = await self.browser.new_context()
-                            self.page = await self.context.new_page()
+                            # Get existing contexts instead of creating new one
+                            contexts = self.browser.contexts
+                            if contexts:
+                                self.context = contexts[0]
+                                pages = self.context.pages
+                                # Find ChatGPT tab or create new one
+                                chatgpt_page = None
+                                for page in pages:
+                                    if "chatgpt.com" in page.url or "chat.openai.com" in page.url:
+                                        chatgpt_page = page
+                                        break
+                                
+                                if chatgpt_page:
+                                    self.page = chatgpt_page
+                                    logger.info("Connected to existing ChatGPT tab after Chrome launch")
+                                else:
+                                    self.page = await self.context.new_page()
+                                    logger.info("Created new tab in existing browser after Chrome launch")
+                            else:
+                                # No contexts, create one
+                                self.context = await self.browser.new_context()
+                                self.page = await self.context.new_page()
+                                logger.info("Created new context in CDP browser after Chrome launch")
+                            
                             logger.info("Successfully connected via CDP after launching Chrome")
                             self.is_cdp_connection = True
                         except Exception as retry_e:
@@ -133,11 +163,15 @@ class ChatGPTBrowserController:
             if not self.browser:
                 raise Exception("Failed to establish browser connection. Chrome with debugging port is required.")
             
-            # Navigate to ChatGPT
-            logger.info("Navigating to ChatGPT...")
-            await self.page.goto(
-                "https://chatgpt.com", wait_until="domcontentloaded", timeout=60000
-            )
+            # Navigate to ChatGPT only if not already there
+            current_url = self.page.url if self.page else ""
+            if "chatgpt.com" not in current_url and "chat.openai.com" not in current_url:
+                logger.info("Navigating to ChatGPT...")
+                await self.page.goto(
+                    "https://chatgpt.com", wait_until="domcontentloaded", timeout=60000
+                )
+            else:
+                logger.info(f"Already on ChatGPT: {current_url}")
 
             # Check if login is needed
             if await self._needs_login():
@@ -153,20 +187,9 @@ class ChatGPTBrowserController:
             logger.error(f"Failed to launch browser: {e}")
             await self.close()
 
-            # For critical browser launch failures, try once more after cleanup
-            if "browser" in str(e).lower() or "playwright" in str(e).lower():
-                logger.info("Attempting to restart browser after failure...")
-                try:
-                    await asyncio.sleep(3)
-                    # Reset state and try again
-                    self.browser = None
-                    self.context = None
-                    self.page = None
-                    self.playwright = None
-                    return await self.launch()
-                except Exception as retry_error:
-                    logger.error(f"Browser restart failed: {retry_error}")
-                    raise retry_error
+            # For critical browser launch failures, don't retry automatically
+            # to avoid infinite loops
+            logger.error("Browser launch failed. Not retrying to avoid loops.")
             raise
 
     async def close(self) -> None:
@@ -274,8 +297,8 @@ class ChatGPTBrowserController:
             
             # Explicitly specify the default Chrome profile location
             if system == "Darwin":
-                # macOS default Chrome profile location
-                user_data_dir = os.path.expanduser("~/Library/Application Support/Google/Chrome")
+                # macOS Chrome automation profile location
+                user_data_dir = os.path.expanduser("~/Library/Application Support/Google/Chrome-Automation")
                 cmd.extend(["--user-data-dir", user_data_dir])
             elif system == "Windows":
                 # Windows default Chrome profile location
@@ -542,24 +565,63 @@ class ChatGPTBrowserController:
             return None
 
         try:
-            # Get all conversation turns
-            turns = await self.page.locator('[data-testid="conversation-turn"]').all()
-
-            if not turns:
+            # Primary method: Get all article elements (conversation messages)
+            articles = await self.page.locator('main article').all()
+            
+            if not articles:
+                # Fallback: Try other message selectors
+                message_selectors = [
+                    'div[data-message-author-role="assistant"]',
+                    'div.group:has(div:has-text("ChatGPT"))',
+                    'div.flex.flex-col:has(div:has-text("said:"))',
+                ]
+                
+                for selector in message_selectors:
+                    messages = await self.page.locator(selector).all()
+                    if messages:
+                        articles = messages
+                        break
+            
+            if not articles:
                 return None
 
-            # Get the last turn (should be assistant's response)
-            last_turn = turns[-1]
+            # Get the last article (should be assistant's response)
+            last_article = articles[-1]
 
             # Extract text content
-            text_content = await last_turn.inner_text()
+            text_content = await last_article.inner_text()
 
-            # Clean up the text (remove metadata like "ChatGPT" label)
-            lines = text_content.strip().split("\n")
-            if lines and lines[0] in ["ChatGPT", "GPT-4", "o1", "o3"]:
-                lines = lines[1:]
+            # Clean up the text
+            # Remove common prefixes
+            prefixes_to_remove = [
+                "ChatGPT said:",
+                "ChatGPT",
+                "GPT-4o said:",
+                "GPT-4 said:",
+                "o1 said:",
+                "o3 said:",
+                "said:"
+            ]
+            
+            cleaned_text = text_content.strip()
+            for prefix in prefixes_to_remove:
+                if cleaned_text.startswith(prefix):
+                    cleaned_text = cleaned_text[len(prefix):].strip()
+                    break
+            
+            # Also check for "Do you like this personality?" and similar suffixes
+            # These are sometimes added by ChatGPT
+            suffixes_to_remove = [
+                "Do you like this personality?",
+                "Was this response helpful?",
+                "Is this what you were looking for?"
+            ]
+            
+            for suffix in suffixes_to_remove:
+                if cleaned_text.endswith(suffix):
+                    cleaned_text = cleaned_text[:-len(suffix)].strip()
 
-            return "\n".join(lines).strip()
+            return cleaned_text
 
         except Exception as e:
             logger.error(f"Failed to get last response: {e}")
@@ -572,18 +634,44 @@ class ChatGPTBrowserController:
 
         try:
             conversation = []
-            turns = await self.page.locator('[data-testid="conversation-turn"]').all()
-
-            for i, turn in enumerate(turns):
-                text = await turn.inner_text()
-                role = "user" if i % 2 == 0 else "assistant"
-
-                # Clean up text
-                lines = text.strip().split("\n")
-                if lines and lines[0] in ["You", "ChatGPT", "GPT-4", "o1", "o3"]:
-                    lines = lines[1:]
-
-                conversation.append({"role": role, "content": "\n".join(lines).strip()})
+            
+            # Get all articles (messages)
+            articles = await self.page.locator('main article').all()
+            
+            if not articles:
+                # Fallback selectors
+                articles = await self.page.locator('div[data-message-author-role]').all()
+            
+            # Process each article
+            for article in articles:
+                text = await article.inner_text()
+                
+                # Determine role based on content
+                role = "assistant"
+                if "You said:" in text or text.startswith("You said:"):
+                    role = "user"
+                    text = text.replace("You said:", "").strip()
+                elif any(prefix in text for prefix in ["ChatGPT said:", "GPT-4o said:", "said:"]):
+                    role = "assistant"
+                    # Remove the prefix
+                    for prefix in ["ChatGPT said:", "GPT-4o said:", "GPT-4 said:", "o1 said:", "o3 said:", "said:"]:
+                        if text.startswith(prefix):
+                            text = text[len(prefix):].strip()
+                            break
+                
+                # Clean up common suffixes
+                suffixes_to_remove = [
+                    "Do you like this personality?",
+                    "Was this response helpful?",
+                    "Is this what you were looking for?"
+                ]
+                
+                for suffix in suffixes_to_remove:
+                    if text.endswith(suffix):
+                        text = text[:-len(suffix)].strip()
+                
+                if text:  # Only add non-empty messages
+                    conversation.append({"role": role, "content": text})
 
             return conversation
 
@@ -614,42 +702,58 @@ class ChatGPTBrowserController:
 
     async def _get_current_model_impl(self) -> str | None:
         """Implementation of model detection logic"""
-        # Look for model indicator with improved selectors
-        model_selectors = [
-            '[data-testid="model-picker"] span',
-            'button[aria-haspopup="menu"] span',
-            "button[data-state] span",  # New UI pattern
-            "div[data-radix-popper-content-wrapper] button span",  # Dropdown button
-            ".model-selector span",
-            "button:has(svg.icon-chevron-down) span",  # Button with dropdown icon
-            "nav button span",  # Sometimes in nav
-        ]
-
-        for selector in model_selectors:
-            try:
-                elements = self.page.locator(selector)
-                count = await elements.count()
-                for i in range(min(count, 5)):  # Check first 5 matches
-                    element = elements.nth(i)
-                    if await element.is_visible():
-                        text = await element.inner_text()
-                        # Validate it's a model name
-                        if any(model in text.lower() for model in ["gpt", "o1", "o3", "claude"]):
-                            return text.strip()
-            except Exception:
-                continue
-
-        # Fallback: Check conversation metadata
+        # Primary method: Look for the model switcher button
         try:
-            # Sometimes model info is in page title or hidden metadata
-            title = await self.page.title()
-            if "GPT" in title or "o1" in title or "o3" in title:
-                for model in ["GPT-4.5", "GPT-4", "o3-mini", "o3", "o1-mini", "o1"]:
-                    if model in title:
-                        return model
+            # The model switcher has a specific test ID
+            model_button = self.page.locator('[data-testid="model-switcher-dropdown-button"]').first
+            if await model_button.count() > 0 and await model_button.is_visible():
+                text = await model_button.text_content()
+                if text:
+                    # Clean up the text - remove "ChatGPT" prefix if present
+                    text = text.strip()
+                    if text.startswith("ChatGPT "):
+                        text = text[8:]  # Remove "ChatGPT " prefix
+                    return text
         except Exception:
             pass
-
+            
+        # Fallback: Look for model info in header buttons
+        try:
+            header_buttons = self.page.locator('header button[aria-label*="Model selector"]')
+            if await header_buttons.count() > 0:
+                button = header_buttons.first
+                if await button.is_visible():
+                    text = await button.text_content()
+                    if text:
+                        # Extract model from text like "ChatGPT 4o"
+                        parts = text.strip().split()
+                        if len(parts) > 1:
+                            return parts[-1]  # Return last part (the model)
+        except Exception:
+            pass
+        
+        # Additional fallback: Look for any button with model names
+        model_selectors = [
+            'button:has-text("4o")',
+            'button:has-text("o1")',
+            'button:has-text("o3")',
+            'button:has-text("GPT-4")',
+            'button:has-text("GPT-4.5")',
+        ]
+        
+        for selector in model_selectors:
+            try:
+                element = self.page.locator(selector).first
+                if await element.count() > 0 and await element.is_visible():
+                    text = await element.text_content()
+                    if text:
+                        # Extract just the model name
+                        for model in ["4o", "o1", "o3", "GPT-4.5", "GPT-4"]:
+                            if model in text:
+                                return model
+            except Exception:
+                continue
+        
         return None
 
     async def select_model(self, model: str) -> bool:
@@ -723,16 +827,19 @@ class ChatGPTBrowserController:
         )
         await asyncio.sleep(0.3)  # Small delay for animation
 
-        # Enhanced model name mapping
+        # Enhanced model name mapping based on the UI screenshot
         model_map = {
             "gpt-4": ["GPT-4", "gpt-4", "GPT 4"],
-            "gpt-4.5": ["GPT-4.5", "gpt-4.5", "GPT 4.5", "ChatGPT Plus"],
-            "4o": ["GPT-4o", "4o", "gpt-4o"],
+            "gpt-4o": ["GPT-4o", "gpt-4o", "GPT 4o", "4o"],  # Map both "4o" and "gpt-4o"
+            "4o": ["GPT-4o", "gpt-4o", "GPT 4o"],  # Allow "4o" as shorthand
             "o1": ["o1", "O1"],
             "o1-preview": ["o1-preview", "O1 Preview", "o1 preview"],
             "o1-mini": ["o1-mini", "O1 Mini", "o1 mini"],
             "o3": ["o3", "O3"],
             "o3-mini": ["o3-mini", "O3 Mini", "o3 mini"],
+            "o3-pro": ["o3-pro", "O3 Pro", "o3 pro"],
+            "o4-mini": ["o4-mini", "O4 Mini", "o4 mini"],
+            "o4-mini-high": ["o4-mini-high", "O4 Mini High", "o4 mini high"],
         }
 
         # Get possible UI texts for the model
@@ -779,6 +886,65 @@ class ChatGPTBrowserController:
             textarea = await self.page.locator("#prompt-textarea").count()
             return textarea > 0
         except Exception:
+            return False
+    
+    async def is_sidebar_open(self) -> bool:
+        """Check if the sidebar is currently open"""
+        try:
+            # Check for sidebar state - look for the close button which only appears when open
+            close_button = self.page.locator('[data-testid="close-sidebar-button"]').first
+            if await close_button.count() > 0 and await close_button.is_visible():
+                return True
+            
+            # Alternative: check aria-expanded attribute
+            sidebar_button = self.page.locator('[aria-controls="stage-slideover-sidebar"]').first
+            if await sidebar_button.count() > 0:
+                aria_expanded = await sidebar_button.get_attribute('aria-expanded')
+                return aria_expanded == 'true'
+            
+            return False
+        except Exception:
+            return False
+    
+    async def toggle_sidebar(self, open: bool = True) -> bool:
+        """Open or close the sidebar
+        
+        Args:
+            open: True to open sidebar, False to close it
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            current_state = await self.is_sidebar_open()
+            
+            # If already in desired state, return success
+            if current_state == open:
+                logger.info(f"Sidebar already {'open' if open else 'closed'}")
+                return True
+            
+            if open:
+                # Look for open sidebar button
+                open_button = self.page.locator('[aria-label="Open sidebar"]').first
+                if await open_button.count() > 0 and await open_button.is_visible():
+                    await open_button.click()
+                    await asyncio.sleep(0.5)  # Wait for animation
+                    logger.info("Opened sidebar")
+                    return True
+            else:
+                # Look for close sidebar button
+                close_button = self.page.locator('[data-testid="close-sidebar-button"]').first
+                if await close_button.count() > 0 and await close_button.is_visible():
+                    await close_button.click()
+                    await asyncio.sleep(0.5)  # Wait for animation
+                    logger.info("Closed sidebar")
+                    return True
+            
+            logger.warning(f"Could not {'open' if open else 'close'} sidebar")
+            return False
+            
+        except Exception as e:
+            logger.error(f"Failed to toggle sidebar: {e}")
             return False
 
     async def send_and_get_response(self, message: str, timeout: int = 120) -> str | None:
@@ -937,59 +1103,82 @@ class ChatGPTBrowserController:
             await self.launch()
 
         try:
-            # Look for regenerate button - ChatGPT shows this after a response
-            regenerate_selectors = [
-                'button[aria-label*="Regenerate"]',
-                'button:has-text("Regenerate")',
-                'button:has-text("Regenerate response")',
-                '[data-testid="regenerate-button"]',
-                'button:has(svg[aria-label*="regenerate"])',
-                # Sometimes it's in a menu
-                'button[aria-label*="More"]',
-                'button[aria-label="ChatGPT options"]',
-            ]
-
-            for selector in regenerate_selectors:
-                try:
-                    element = self.page.locator(selector).first
-                    if await element.count() > 0 and await element.is_visible():
-                        # If it's the "More" menu, click it first
-                        if "More" in selector or "options" in selector:
-                            await element.click()
-                            await asyncio.sleep(0.5)
-
-                            # Look for regenerate in dropdown
-                            dropdown_regenerate = self.page.locator('button:has-text("Regenerate")')
-                            if await dropdown_regenerate.count() > 0:
-                                await dropdown_regenerate.first.click()
-                                logger.info("Clicked regenerate in dropdown menu")
-                                return True
-                        else:
-                            # Direct regenerate button
-                            await element.click()
-                            logger.info("Clicked regenerate button")
-                            return True
-                except Exception as e:
-                    logger.debug(f"Failed with selector {selector}: {e}")
-                    continue
-
-            # Alternative: Try keyboard shortcut if available
-            # Some versions of ChatGPT support Ctrl+R or similar
-            try:
-                await self.page.keyboard.press("Control+r")
-                await asyncio.sleep(0.5)
-                # Check if regeneration started (thinking animation)
-                if await self._is_responding():
-                    logger.info("Triggered regeneration via keyboard shortcut")
-                    return True
-            except Exception:
-                pass
-
-            logger.warning("Regenerate button not found")
+            # First, check if we have an assistant response to regenerate
+            articles = await self.page.locator('main article').all()
+            if len(articles) < 2:
+                logger.warning("No assistant response to regenerate")
+                return False
+            
+            # Get the last article (should be assistant's response)
+            last_article = articles[-1]
+            text = await last_article.inner_text()
+            
+            # Verify it's an assistant message
+            if "You said:" in text:
+                logger.warning("Last message is from user, cannot regenerate")
+                return False
+            
+            # In the new UI, regenerate is in the model dropdown menu
+            # Click the model selector dropdown
+            model_button = self.page.locator('[data-testid="model-switcher-dropdown-button"]').first
+            if await model_button.count() == 0:
+                # Fallback selector
+                model_button = self.page.locator('header button[aria-label*="Model selector"]').first
+            
+            if await model_button.count() > 0 and await model_button.is_visible():
+                await model_button.click()
+                await asyncio.sleep(0.5)  # Wait for menu to open
+                
+                # Look for "Try again" option in the dropdown
+                try_again_selectors = [
+                    'button:has-text("Try again")',
+                    'div[role="menuitem"]:has-text("Try again")',
+                    '[role="menuitem"]:has-text("Try again")',
+                    'button span:has-text("Try again")',
+                ]
+                
+                for selector in try_again_selectors:
+                    try_again = self.page.locator(selector).first
+                    if await try_again.count() > 0 and await try_again.is_visible():
+                        await try_again.click()
+                        logger.info("Clicked 'Try again' to regenerate response")
+                        
+                        # Wait a bit for the UI to stabilize
+                        # Note: Regeneration can cause the sidebar to flicker
+                        await asyncio.sleep(1)
+                        
+                        # Close any open dropdowns to prevent UI issues
+                        await self.page.keyboard.press("Escape")
+                        
+                        return True
+                
+                # If not found, close the dropdown
+                await self.page.keyboard.press("Escape")
+            
+            logger.warning("Could not find regenerate option in model dropdown")
             return False
 
         except Exception as e:
             logger.error(f"Failed to regenerate response: {e}")
+            return False
+    
+    async def _is_responding(self) -> bool:
+        """Check if ChatGPT is currently generating a response"""
+        try:
+            # Check for thinking indicators
+            thinking_selectors = [
+                '[data-testid="thinking-indicator"]',
+                ".animate-pulse",
+                'div:has-text("Thinking")',
+                'button:has-text("Stop generating")',
+            ]
+            
+            for selector in thinking_selectors:
+                if await self.page.locator(selector).count() > 0:
+                    return True
+            
+            return False
+        except Exception:
             return False
 
     async def export_conversation(self, format: str = "markdown") -> str | None:
@@ -1014,18 +1203,30 @@ class ChatGPTBrowserController:
             if format == "json":
                 # Return raw JSON
                 import json
-
-                return json.dumps(conversation, indent=2)
+                from datetime import datetime
+                
+                # Add metadata
+                export_data = {
+                    "model": await self.get_current_model() or "Unknown",
+                    "timestamp": datetime.now().isoformat(),
+                    "messages": conversation
+                }
+                return json.dumps(export_data, indent=2)
 
             elif format == "markdown":
                 # Convert to markdown format
+                from datetime import datetime
+                
                 md_lines = []
                 md_lines.append("# ChatGPT Conversation")
-                md_lines.append(f"\n**Model**: {conversation.get('model', 'Unknown')}")
-                md_lines.append(f"**Date**: {conversation.get('timestamp', 'Unknown')}\n")
+                
+                # Get current model
+                model = await self.get_current_model() or "Unknown"
+                md_lines.append(f"\n**Model**: {model}")
+                md_lines.append(f"**Date**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
 
-                messages = conversation.get("messages", [])
-                for msg in messages:
+                # Add messages
+                for msg in conversation:
                     role = msg.get("role", "unknown")
                     content = msg.get("content", "")
 
@@ -1097,6 +1298,9 @@ class ChatGPTBrowserController:
             await self.launch()
 
         try:
+            # Ensure sidebar is open to see conversations
+            await self.toggle_sidebar(open=True)
+            
             # Look for conversation list
             conversation_list_selectors = [
                 '[data-testid="conversation-list"]',
@@ -1112,6 +1316,7 @@ class ChatGPTBrowserController:
                     # Find individual conversation items
                     item_selectors = [
                         'a[href^="/c/"]',  # Conversation links
+                        '[data-testid^="history-item-"]',  # New pattern with test IDs
                         '[data-testid="conversation-item"]',
                         'div[role="button"]',
                     ]
@@ -1160,6 +1365,9 @@ class ChatGPTBrowserController:
             await self.launch()
 
         try:
+            # Ensure sidebar is open
+            await self.toggle_sidebar(open=True)
+            
             # If it's an index, get the conversation list
             if isinstance(conversation_id, int):
                 conversations = await self.list_conversations()
@@ -1177,6 +1385,7 @@ class ChatGPTBrowserController:
                         # Find and click the conversation item
                         item_selectors = [
                             f'a[href^="/c/"]:has-text("{conv["title"]}")',
+                            f'[data-testid^="history-item-"]:has-text("{conv["title"]}")',
                             f'[data-testid="conversation-item"]:has-text("{conv["title"]}")',
                             f'div[role="button"]:has-text("{conv["title"]}")',
                         ]
@@ -1187,6 +1396,9 @@ class ChatGPTBrowserController:
                                 await item.click()
                                 await asyncio.sleep(1)  # Wait for navigation
                                 logger.info(f"Switched to conversation: {conv['title']}")
+                                
+                                # Close sidebar after switching (optional)
+                                await self.toggle_sidebar(open=False)
                                 return True
             else:
                 # Direct navigation by ID
@@ -1197,6 +1409,8 @@ class ChatGPTBrowserController:
                 # Verify we're in the right conversation
                 if await self.is_ready():
                     logger.info(f"Switched to conversation: {conversation_id}")
+                    # Close sidebar after switching (optional)
+                    await self.toggle_sidebar(open=False)
                     return True
 
             logger.error("Failed to switch conversation")
@@ -1223,49 +1437,59 @@ class ChatGPTBrowserController:
             if not await self.switch_conversation(conversation_id):
                 return False
 
-            # Look for delete/options button
-            delete_selectors = [
-                'button[aria-label*="Delete"]',
-                'button[aria-label*="Options"]',
-                'button[aria-label*="More"]',
-                'button:has(svg[class*="trash"])',
-            ]
-
-            for selector in delete_selectors:
-                btn = self.page.locator(selector).first
-                if await btn.count() > 0 and await btn.is_visible():
-                    await btn.click()
-                    await asyncio.sleep(0.5)
-
-                    # Look for delete option in menu
-                    if "Options" in selector or "More" in selector:
-                        delete_option_selectors = [
+            # The delete option might be in the header
+            # Look for conversation options button in header
+            options_button = self.page.locator('[data-testid="conversation-options-button"]').first
+            if await options_button.count() == 0:
+                # Fallback selectors
+                options_selectors = [
+                    'button[aria-label="Open conversation options"]',
+                    'header button[aria-label*="Options"]',
+                    'header button[aria-label*="More"]',
+                ]
+                
+                for selector in options_selectors:
+                    btn = self.page.locator(selector).first
+                    if await btn.count() > 0 and await btn.is_visible():
+                        options_button = btn
+                        break
+            
+            if await options_button.count() > 0 and await options_button.is_visible():
+                await options_button.click()
+                await asyncio.sleep(0.5)
+                
+                # Look for delete option in menu
+                delete_option_selectors = [
+                    'button:has-text("Delete")',
+                    '[role="menuitem"]:has-text("Delete")',
+                    'div[role="menuitem"]:has-text("Delete")',
+                ]
+                
+                for del_sel in delete_option_selectors:
+                    del_btn = self.page.locator(del_sel).first
+                    if await del_btn.count() > 0 and await del_btn.is_visible():
+                        await del_btn.click()
+                        await asyncio.sleep(0.5)
+                        
+                        # Confirm deletion
+                        confirm_selectors = [
                             'button:has-text("Delete")',
-                            '[role="menuitem"]:has-text("Delete")',
+                            'button:has-text("Confirm")',
+                            'button[aria-label="Confirm deletion"]',
+                            '[role="dialog"] button:has-text("Delete")',
                         ]
-
-                        for del_sel in delete_option_selectors:
-                            del_btn = self.page.locator(del_sel).first
-                            if await del_btn.count() > 0:
-                                await del_btn.click()
-                                break
-
-                    # Confirm deletion
-                    confirm_selectors = [
-                        'button:has-text("Delete")',
-                        'button:has-text("Confirm")',
-                        'button[aria-label="Confirm deletion"]',
-                    ]
-
-                    for conf_sel in confirm_selectors:
-                        conf_btn = self.page.locator(conf_sel).last  # Often in modal
-                        if await conf_btn.count() > 0 and await conf_btn.is_visible():
-                            await conf_btn.click()
-                            await asyncio.sleep(1)
-                            logger.info("Conversation deleted")
-                            return True
-
-            logger.error("Delete button not found")
+                        
+                        for conf_sel in confirm_selectors:
+                            conf_btn = self.page.locator(conf_sel).last  # Often in modal
+                            if await conf_btn.count() > 0 and await conf_btn.is_visible():
+                                await conf_btn.click()
+                                await asyncio.sleep(1)
+                                logger.info("Conversation deleted")
+                                return True
+                        
+                        break
+            
+            logger.error("Could not find delete option")
             return False
 
         except Exception as e:
@@ -1286,111 +1510,78 @@ class ChatGPTBrowserController:
             await self.launch()
 
         try:
-            # Find all user message elements
-            user_message_selectors = [
-                '[data-message-author-role="user"]',
-                'div[class*="user-message"]',
-                "div.group:has(div.text-right)",  # Some versions use this layout
-            ]
-
-            user_messages = None
-            for selector in user_message_selectors:
-                messages = self.page.locator(selector)
-                count = await messages.count()
-                if count > 0:
-                    user_messages = messages
-                    break
-
-            if not user_messages:
+            # Get all articles (messages)
+            articles = await self.page.locator('main article').all()
+            
+            # Filter for user messages
+            user_articles = []
+            for article in articles:
+                text = await article.inner_text()
+                if "You said:" in text or text.startswith("You said:"):
+                    user_articles.append(article)
+            
+            if not user_articles:
                 logger.error("No user messages found")
                 return False
-
+            
             # Check if index is valid
-            message_count = await user_messages.count()
-            if message_index < 0 or message_index >= message_count:
+            if message_index < 0 or message_index >= len(user_articles):
                 logger.error(
-                    f"Invalid message index: {message_index} (found {message_count} messages)"
+                    f"Invalid message index: {message_index} (found {len(user_articles)} user messages)"
                 )
                 return False
-
+            
             # Get the specific message
-            target_message = user_messages.nth(message_index)
-
-            # Look for edit button
-            edit_button_selectors = [
-                'button[aria-label*="Edit"]',
-                'button:has(svg[aria-label*="edit"])',
-                'button:has(svg[class*="pencil"])',
-            ]
-
-            edit_button = None
-            for selector in edit_button_selectors:
-                btn = target_message.locator(selector).first
-                if await btn.count() > 0:
-                    edit_button = btn
-                    break
-
-            if not edit_button:
-                # Try hovering to reveal edit button
-                await target_message.hover()
-                await asyncio.sleep(0.5)
-
-                # Try again
+            target_message = user_articles[message_index]
+            
+            # Hover to reveal edit button
+            await target_message.hover()
+            await asyncio.sleep(0.5)
+            
+            # Look for edit button with the specific aria-label we found
+            edit_button = target_message.locator('button[aria-label="Edit message"]').first
+            
+            if await edit_button.count() == 0 or not await edit_button.is_visible():
+                # Try alternative selectors
+                edit_button_selectors = [
+                    'button[aria-label*="Edit"]',
+                    'button:has(svg[class*="pencil"])',
+                ]
+                
                 for selector in edit_button_selectors:
                     btn = target_message.locator(selector).first
-                    if await btn.count() > 0:
+                    if await btn.count() > 0 and await btn.is_visible():
                         edit_button = btn
                         break
-
-            if not edit_button:
-                logger.error("Edit button not found")
-                return False
-
+                else:
+                    logger.error("Edit button not found after hovering")
+                    return False
+            
             # Click edit button
             await edit_button.click()
             await asyncio.sleep(0.5)
-
-            # Find the edit textarea
-            edit_textarea_selectors = [
-                'textarea[aria-label*="Edit"]',
-                "textarea.editing",
-                "textarea:focus",  # Often the textarea gets focus
-            ]
-
-            edit_textarea = None
-            for selector in edit_textarea_selectors:
-                textarea = self.page.locator(selector).first
-                if await textarea.count() > 0:
-                    edit_textarea = textarea
-                    break
-
-            if not edit_textarea:
+            
+            # Find the edit textarea - it should appear in place of the message
+            edit_textarea = target_message.locator('textarea').first
+            
+            if await edit_textarea.count() == 0:
+                # Try global search
+                edit_textarea = self.page.locator('textarea:focus').first
+                
+            if await edit_textarea.count() == 0:
                 logger.error("Edit textarea not found")
                 return False
-
+            
             # Clear and type new content
             await edit_textarea.clear()
             await edit_textarea.fill(new_content)
-
-            # Submit the edit - usually Enter or a submit button
-            submit_selectors = [
-                'button[aria-label*="Save"]',
-                'button[aria-label*="Submit"]',
-                'button:has(svg[aria-label*="send"])',
-            ]
-
-            submitted = False
-            for selector in submit_selectors:
-                btn = self.page.locator(selector).first
-                if await btn.count() > 0 and await btn.is_visible():
-                    await btn.click()
-                    submitted = True
-                    break
-
-            if not submitted:
-                # Try pressing Enter
-                await edit_textarea.press("Enter")
-
+            
+            # Submit the edit - usually Enter
+            await edit_textarea.press("Enter")
+            
+            # Wait for the edit to process
+            await asyncio.sleep(1)
+            
             logger.info(f"Edited message at index {message_index}")
             return True
 

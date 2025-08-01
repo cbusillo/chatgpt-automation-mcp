@@ -2,150 +2,186 @@
 
 ## Architecture Overview
 
-The ChatGPT Automation MCP uses Playwright to control the ChatGPT web interface through browser automation. By default, it connects to an existing Chrome instance via CDP (Chrome DevTools Protocol) to bypass Cloudflare protection.
+The ChatGPT Automation MCP uses Playwright to control the ChatGPT web interface through browser automation. It connects to an existing Chrome instance via CDP (Chrome DevTools Protocol) using a copied Chrome profile to maintain session persistence and bypass Cloudflare protection.
 
-### Why CDP Mode?
+### Why CDP with Chrome Profile Copy?
 
-- **Cloudflare Bypass**: Connects to your real browser with authenticated session
-- **No Automation Flags**: Uses your actual Chrome profile without detection
-- **Session Persistence**: Leverages existing cookies and login state
-- **Real User Context**: Maintains authentic browser fingerprint
+- **Cloudflare Bypass**: Uses real Chrome profile with authenticated session
+- **Session Persistence**: Maintains login state across MCP restarts
+- **No Automation Flags**: Appears as regular user browser
+- **Chrome Security**: Chrome blocks CDP on default profile, so we use a copy
 
 ## Core Components
 
 ### 1. MCP Server (`server.py`)
-- Implements the Model Context Protocol specification
-- Exposes tools for ChatGPT automation
+- Implements Model Context Protocol specification
+- Exposes 19 tools for ChatGPT automation
 - Handles async communication with Claude
+- Manages browser controller lifecycle
 
 ### 2. Browser Controller (`browser_controller.py`)
-- Manages Playwright browser instance
-- Handles page navigation and interactions
-- Implements response detection logic
+- Manages CDP connection to Chrome
+- Implements all ChatGPT interactions
+- Handles sidebar state management
+- Provides comprehensive error recovery
 
-### 3. Configuration (`config.py`)
+### 3. Error Recovery (`error_recovery.py`)
+- Automatic retry with exponential backoff
+- Browser crash recovery
+- Session restoration
+- Network error handling
+
+### 4. Configuration (`config.py`)
 - Environment-based configuration
-- Secure credential management
-- Path and timeout settings
+- Chrome profile management
+- Timeout and path settings
 
 ## Implementation Details
 
-### Browser Automation Strategy
+### Chrome Profile Management
 
-We use Playwright with CDP connection because:
-- **Cloudflare Protection**: CDP mode bypasses anti-automation detection
-- **Cross-platform**: Works on macOS, Linux, Windows
-- **Reliable selectors**: CSS and accessibility-based element selection  
-- **Session persistence**: Uses existing browser session
-- **Fallback Support**: Can launch new browser if CDP unavailable
-
-### CDP vs Standard Mode
-
-| Feature | CDP Mode | Standard Mode |
-|---------|----------|---------------|
-| Cloudflare Protection | ✅ Bypassed | ❌ Blocked |
-| Uses Existing Session | ✅ Yes | ❌ No |
-| Requires Chrome Running | ✅ Yes | ❌ No |
-| Automation Detection | ✅ Hidden | ❌ Visible |
-
-### Key Challenges Solved
-
-1. **Response Detection**
-   - Monitor DOM changes for completion indicators
-   - Track network activity for API calls
-   - Detect thinking animations and streaming
-
-2. **Model Selection**
-   - Navigate model picker UI reliably
-   - Handle dynamic model lists
-   - Verify selection success
-
-3. **Session Management**
-   - Persist browser context between runs
-   - Handle re-authentication when needed
-   - Manage cookies and local storage
-
-### Selector Strategy
-
-```javascript
-// Primary selectors used
-const SELECTORS = {
-  newChatButton: '[data-testid="new-chat-button"]',
-  messageInput: '#prompt-textarea',
-  sendButton: '[data-testid="send-button"]',
-  modelPicker: '[data-testid="model-picker"]',
-  responseContainer: '[data-testid="conversation-turn"]:last-child',
-  thinkingIndicator: '[data-testid="thinking-indicator"]'
+```python
+# Profile locations by platform
+CHROME_PROFILES = {
+    "darwin": "~/Library/Application Support/Google/Chrome-Automation",
+    "win32": "%LOCALAPPDATA%\\Google\\Chrome-Automation",
+    "linux": "~/.config/google-chrome-automation"
 }
 ```
 
-## API Design
+The MCP automatically:
+1. Detects if Chrome is running with debugging
+2. Copies default profile to Chrome-Automation (first run only)
+3. Launches Chrome with `--remote-debugging-port=9222`
+4. Connects via CDP using `playwright.chromium.connect_over_cdp()`
 
-### Tool Patterns
+### Key Features Implemented
 
-Each tool follows a consistent pattern:
-1. Validate input parameters
-2. Ensure browser is ready
-3. Perform action with retries
-4. Return structured response
+1. **Sidebar State Management**
+   - `is_sidebar_open()`: Detects sidebar visibility
+   - `toggle_sidebar()`: Opens/closes with Ctrl+Shift+S
+   - Automatic handling in conversation operations
 
-### Error Handling
+2. **Model Selection**
+   - Supports all GPT models (4, 4.5, o1, o3, etc.)
+   - Model name mapping for UI consistency
+   - Verification after selection
 
-- **Timeout errors**: Configurable timeouts with clear messages
-- **Element not found**: Retry with exponential backoff
-- **Network errors**: Graceful degradation
-- **Auth errors**: Prompt for re-login
+3. **Conversation Management**
+   - List all conversations with metadata
+   - Switch between conversations
+   - Delete conversations
+   - Export in markdown/JSON formats
 
-## Performance Considerations
+4. **Advanced Features**
+   - Search/browse mode toggling
+   - File upload support
+   - Message editing
+   - Response regeneration
+   - Batch operations
 
-### Optimization Strategies
+### Selector Strategy
 
-1. **Lazy Loading**
-   - Only launch browser when needed
-   - Reuse existing pages when possible
+```python
+# Current selectors (as of Jan 2025)
+SELECTORS = {
+    'model_button': '[data-testid="model-switcher-dropdown-button"]',
+    'message_input': '#prompt-textarea',
+    'send_button': '[data-testid="send-button"]',
+    'messages': 'main article',
+    'sidebar': 'nav[aria-label="Chat history"]',
+    'new_chat': 'button[aria-label="New chat"]',
+    'tools_menu': 'button[aria-label="Tools"]',
+    'regenerate': 'span:has-text("Try again")'
+}
+```
 
-2. **Smart Waiting**
-   - Use Playwright's built-in wait conditions
-   - Avoid fixed sleeps
+## Error Handling & Recovery
 
-3. **Resource Management**
-   - Close unused tabs
-   - Clear memory periodically
-   - Limit screenshot storage
+### Automatic Recovery Scenarios
+- **Browser Crashes**: Restart and restore session
+- **Network Errors**: Retry with exponential backoff
+- **Session Expiration**: Re-authentication (if credentials provided)
+- **Element Not Found**: Page refresh and retry
+- **Rate Limiting**: Intelligent waiting
 
-## Security
+### Recovery Implementation
 
-### Credential Handling
-- Never log passwords
-- Use environment variables
-- Secure session storage
-
-### Browser Isolation
-- Separate context per session
-- Clear sensitive data on exit
-- Sandbox browser process
+```python
+@with_error_recovery(
+    max_retries=3,
+    retry_delay=1.0,
+    error_handlers={
+        PlaywrightTimeout: lambda: "Refresh page and retry",
+        TargetClosedError: lambda: "Restart browser"
+    }
+)
+async def send_message(self, message: str):
+    # Implementation with automatic recovery
+```
 
 ## Testing Strategy
 
-### Unit Tests
-- Mock Playwright interactions
-- Test error conditions
-- Validate tool schemas
+### Test Structure
+- `tests/test_browser_controller.py`: Unit tests with mocks
+- `tests/test_integration.py`: Full browser automation tests
+- `tests/test_functional.py`: Quick smoke test
 
-### Integration Tests
-- Real browser automation
-- End-to-end workflows
-- Visual regression tests
+### Running Tests
+```bash
+# Unit tests
+uv run pytest tests/test_browser_controller.py -v
 
-## Future Enhancements
+# Integration tests (requires browser)
+uv run pytest tests/test_integration.py --integration -v
 
-### Planned Features
-1. **WebSocket support** for real-time updates
-2. **Plugin system** for custom extensions
-3. **Batch operations** for efficiency
-4. **Export formats** (PDF, Markdown, JSON)
+# All tests with coverage
+uv run pytest --cov=src/chatgpt_automation_mcp
+```
 
-### Architecture Evolution
-- Consider CDP for advanced features
-- Explore native messaging APIs
-- Investigate official ChatGPT API when available
+## Performance Optimizations
+
+1. **Connection Reuse**
+   - Single CDP connection for entire session
+   - No browser restarts between operations
+
+2. **Smart Waiting**
+   - Dynamic waits based on UI state
+   - No fixed sleep delays
+   - Efficient response detection
+
+3. **Batch Operations**
+   - Execute multiple operations in sequence
+   - Shared context for efficiency
+   - Error handling per operation
+
+## Security Considerations
+
+1. **Profile Isolation**
+   - Separate Chrome-Automation profile
+   - No modification of default profile
+   - Clear cleanup instructions
+
+2. **Credential Management**
+   - Optional credentials in .env
+   - Never logged or exposed
+   - Session-based authentication preferred
+
+3. **Local Execution**
+   - CDP only on localhost
+   - No remote browser control
+   - Sandboxed browser process
+
+## Known Limitations
+
+1. **Chrome Requirement**: Must use Chrome (not Chromium/Edge)
+2. **Single Tab**: Operations on active tab only
+3. **UI Dependencies**: May break with ChatGPT UI changes
+4. **Pro Features**: Some features require ChatGPT Pro
+
+## Future Considerations
+
+1. **Multi-tab Support**: Handle multiple ChatGPT tabs
+2. **Advanced Modes**: Canvas, Projects integration
+3. **Performance Metrics**: Token usage tracking
+4. **Voice/Image**: Support multimodal inputs

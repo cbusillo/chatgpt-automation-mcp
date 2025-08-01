@@ -33,25 +33,20 @@ uv run playwright install chromium
 
 ### Chrome Setup for CDP Mode (Recommended)
 
-To bypass Cloudflare protection, we connect to your existing Chrome browser:
+To bypass Cloudflare protection, we use a copy of your Chrome profile with remote debugging enabled:
 
-1. **Close your current Chrome completely** (Cmd+Q on macOS)
+1. **The MCP will automatically create a Chrome profile copy** at:
+   - macOS: `~/Library/Application Support/Google/Chrome-Automation`
+   - Windows: `%LOCALAPPDATA%\Google\Chrome-Automation`
+   - Linux: `~/.config/google-chrome-automation`
 
-2. **Launch Chrome with debugging port**:
-   ```bash
-   # macOS (uses your default profile)
-   /Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome --remote-debugging-port=9222
-   
-   # Windows (uses your default profile)
-   "C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222
-   
-   # Linux (uses your default profile)
-   google-chrome --remote-debugging-port=9222
-   ```
+2. **First time setup**: The MCP will copy your default Chrome profile to preserve logins
 
-3. **Your normal Chrome will open** with all your logins preserved
+3. **Chrome will launch automatically** with debugging enabled when you use the MCP
 
 4. **Keep Chrome running** while using the MCP server
+
+**Important**: When uninstalling, remember to delete the Chrome-Automation profile directory to free up disk space.
 
 **Note**: The debugging port allows the MCP to control Chrome. This is safe for local use only.
 
@@ -147,15 +142,43 @@ print(f"Batch completed: {batch_result['successful_operations']}/{batch_result['
 
 ## Development
 
+### Installing Dependencies
+
+This project uses UV for dependency management:
+
+```bash
+# Install all dependencies including dev dependencies
+uv sync --dev
+```
+
 ### Running Tests
 
 ```bash
-# Run all tests
-uv run pytest
+# Run unit tests
+uv run pytest tests/test_browser_controller.py -v
 
-# Run with coverage
-uv run pytest --cov
+# Run all tests with coverage
+uv run pytest --cov=src/chatgpt_automation_mcp --cov-report=html
+
+# Run specific test
+uv run pytest -k test_sidebar_handling -v
+
+# Run functional test (requires browser)
+uv run python tests/test_functional.py
+
+# Or use the test runner script
+uv run run-tests --unit        # Unit tests only
+uv run run-tests --integration # Integration tests (requires browser)
+uv run run-tests --all         # All tests
+uv run run-tests --coverage    # With coverage report
 ```
+
+### Test Structure
+
+- `tests/test_browser_controller.py` - Unit tests with mocked browser
+- `tests/test_integration.py` - Integration tests with real browser
+- `tests/test_functional.py` - Quick smoke test for basic functionality
+- `run_tests.py` - Test runner with various options
 
 ### Code Quality
 
@@ -165,6 +188,9 @@ uv run ruff format .
 
 # Check linting
 uv run ruff check .
+
+# Fix linting issues
+uv run ruff check . --fix
 ```
 
 ## Error Handling & Recovery

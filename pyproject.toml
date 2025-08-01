@@ -9,6 +9,7 @@ dependencies = [
     "mcp>=0.1.0",
     "python-dotenv>=1.0.0",
     "playwright>=1.40.0",
+    "websockets>=12.0",
 ]
 
 [project.optional-dependencies]
@@ -21,6 +22,9 @@ dev = [
 [tool.uv]
 dev-dependencies = [
     "ipython>=8.18.0",
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-cov>=4.1.0",
 ]
 
 [build-system]
@@ -35,6 +39,13 @@ target-version = "py312"
 select = ["E", "F", "I", "N", "W", "UP"]
 ignore = ["E501"]  # Line too long - we set to 100
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+asyncio_mode = "auto"
+addopts = "-v"
+
 [project.scripts]
 chatgpt-mcp = "chatgpt_automation_mcp.server:main"
 test-browser = "chatgpt_automation_mcp.browser_controller:test_browser_controller"
+run-tests = "run_tests:main"
