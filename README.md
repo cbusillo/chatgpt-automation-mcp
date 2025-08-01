@@ -214,6 +214,14 @@ uv run ruff check .
 uv run ruff check . --fix
 ```
 
+### Development Best Practices
+
+See [docs/DEVELOPMENT_BEST_PRACTICES.md](docs/DEVELOPMENT_BEST_PRACTICES.md) for important lessons learned about:
+- Visual verification testing with screenshots
+- Handling ChatGPT UI changes
+- Selector best practices
+- Common pitfalls and debugging tips
+
 ## Error Handling & Recovery
 
 The MCP server includes comprehensive error handling and automatic recovery for common issues:
