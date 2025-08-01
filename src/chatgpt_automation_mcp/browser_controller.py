@@ -439,8 +439,14 @@ class ChatGPTBrowserController:
             # Fallback: navigate directly
             await self.page.goto("https://chatgpt.com/", wait_until="networkidle")
 
+        # Wait for page to stabilize (theme, etc.)
+        await asyncio.sleep(1.5)  # Allow theme to load
+        
         # Wait for input to be ready
         await self.page.wait_for_selector("#prompt-textarea", state="visible")
+        
+        # Additional stabilization wait
+        await asyncio.sleep(0.5)
         return "New chat started"
 
     async def send_message(self, message: str) -> str:
@@ -825,7 +831,7 @@ class ChatGPTBrowserController:
             state="visible",
             timeout=5000,
         )
-        await asyncio.sleep(0.3)  # Small delay for animation
+        await asyncio.sleep(1.0)  # Increased delay for animation
 
         # Enhanced model name mapping based on the UI screenshot
         model_map = {
@@ -863,13 +869,15 @@ class ChatGPTBrowserController:
                     option = self.page.locator(f'{selector}:has-text("{ui_model}")').first
                     if await option.count() > 0 and await option.is_visible():
                         await option.click()
-                        await asyncio.sleep(0.5)  # Wait for selection
+                        await asyncio.sleep(1.5)  # Increased wait for selection to apply
 
-                        # Verify selection
-                        new_model = await self.get_current_model()
-                        if new_model and ui_model.lower() in new_model.lower():
-                            logger.info(f"Successfully selected model: {new_model}")
-                            return True
+                        # Verify selection with retry
+                        for _ in range(3):
+                            await asyncio.sleep(0.5)
+                            new_model = await self.get_current_model()
+                            if new_model and ui_model.lower() in new_model.lower():
+                                logger.info(f"Successfully selected model: {new_model}")
+                                return True
                 except Exception:
                     continue
 
@@ -928,7 +936,7 @@ class ChatGPTBrowserController:
                 open_button = self.page.locator('[aria-label="Open sidebar"]').first
                 if await open_button.count() > 0 and await open_button.is_visible():
                     await open_button.click()
-                    await asyncio.sleep(0.5)  # Wait for animation
+                    await asyncio.sleep(1.0)  # Increased wait for animation
                     logger.info("Opened sidebar")
                     return True
             else:
@@ -936,7 +944,7 @@ class ChatGPTBrowserController:
                 close_button = self.page.locator('[data-testid="close-sidebar-button"]').first
                 if await close_button.count() > 0 and await close_button.is_visible():
                     await close_button.click()
-                    await asyncio.sleep(0.5)  # Wait for animation
+                    await asyncio.sleep(1.0)  # Increased wait for animation
                     logger.info("Closed sidebar")
                     return True
             
@@ -1000,7 +1008,10 @@ class ChatGPTBrowserController:
                         # Toggle if needed
                         if is_checked is not None and is_checked != enable:
                             await element.click()
-                            await asyncio.sleep(0.5)  # Wait for state change
+                            await asyncio.sleep(1.0)  # Increased wait for state change
+                            
+                            # Verify state changed
+                            await asyncio.sleep(0.5)
 
                         return True
                 except Exception:
