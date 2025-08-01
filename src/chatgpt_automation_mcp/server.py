@@ -14,6 +14,7 @@ from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData, ServerCapabilities, TextContent, Tool, ToolsCapability
 
 from .browser_controller import ChatGPTBrowserController
+from .timeout_helper import get_default_timeout, format_timeout_for_display
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -72,13 +73,14 @@ async def list_tools() -> list[Tool]:
                         "type": "string",
                         "description": "Model to select",
                         "enum": [
-                            "gpt-4",
-                            "gpt-4.5",
-                            "o1",
-                            "o1-preview",
-                            "o1-mini",
+                            "gpt-4o",
                             "o3",
-                            "o3-mini",
+                            "o3-pro",
+                            "o4-mini",
+                            "o4-mini-high",
+                            "gpt-4.5",
+                            "gpt-4.1",
+                            "gpt-4.1-mini",
                         ],
                     }
                 },
@@ -379,7 +381,22 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
 
         elif name == "chatgpt_send_and_get_response":
             message = arguments["message"]
-            timeout = arguments.get("timeout", 120)
+            
+            # Get current model to determine appropriate timeout
+            current_model = await ctrl.get_current_model()
+            
+            # Check if Deep Research or other special mode is active
+            # (You could enhance this by tracking the current mode)
+            mode = None
+            if "research" in message.lower() or "deep research" in message.lower():
+                mode = "deep_research"
+            
+            # Use provided timeout or calculate based on model/mode
+            default_timeout = get_default_timeout(model=current_model, mode=mode)
+            timeout = arguments.get("timeout", default_timeout)
+            
+            # Log the timeout being used
+            logger.info(f"Using timeout of {format_timeout_for_display(timeout)} for model {current_model or 'unknown'}")
 
             response = await ctrl.send_and_get_response(message, timeout)
 

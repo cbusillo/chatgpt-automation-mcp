@@ -5,7 +5,7 @@ A Model Context Protocol (MCP) server for automating ChatGPT web interface using
 ## Features
 
 - 🌐 **Browser Automation**: Controls ChatGPT web interface via Playwright
-- 🤖 **Model Selection**: Switch between GPT-4, GPT-4.1, O1, O3, and other models
+- 🤖 **Model Selection**: Switch between GPT-4o, o3, o3-pro, o4-mini, o4-mini-high, GPT-4.5, GPT-4.1, and GPT-4.1-mini
 - 💬 **Conversation Management**: New chats, send messages, get responses
 - 🔄 **Session Persistence**: Maintain login state across sessions
 - 🛡️ **Secure Configuration**: Environment-based configuration with .env support
@@ -139,6 +139,27 @@ batch_result = await chatgpt_batch_operations(operations=[
 ])
 print(f"Batch completed: {batch_result['successful_operations']}/{batch_result['total_operations']} operations successful")
 ```
+
+## Available Models (July 2025)
+
+### Main Models
+- **GPT-4o** - Default model, multimodal (text/image/audio), very fast (<1s)
+- **o3** - Advanced reasoning, 1-2s response + thinking time
+- **o3-pro** - Best reasoning, can take 10+ minutes! Use sparingly
+- **o4-mini** - Fastest reasoning model (0.5-1s)
+- **o4-mini-high** - Best balance of speed and coding ability (0.8-1.5s) - **Recommended default**
+
+### Additional Models (More models menu)
+- **GPT-4.5** - Creative ideation, novel solutions (deprecated July 14, 2025)
+- **GPT-4.1** - Huge context (1M tokens), 15s-1min for large files
+- **GPT-4.1-mini** - Faster variant of GPT-4.1 with same context
+
+### Model Selection Tips
+- **Default choice**: `o4-mini-high` for most development tasks
+- **Quick scripts**: `o4-mini` for fastest response
+- **Complex problems**: `o3` when you need deep reasoning
+- **Critical code**: `o3-pro` only for mission-critical analysis (very slow!)
+- **Large codebases**: `GPT-4.1` or `GPT-4.1-mini` for 1M token context
 
 ## Development
 

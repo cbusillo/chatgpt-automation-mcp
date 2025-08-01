@@ -50,6 +50,15 @@ class Config:
     # CDP Connection settings
     USE_CDP: bool = os.getenv("USE_CDP", "true").lower() == "true"
     CDP_URL: str = os.getenv("CDP_URL", "http://127.0.0.1:9222")
+    
+    # Animation delays
+    ANIMATION_DELAY_MULTIPLIER: float = float(os.getenv("CHATGPT_ANIMATION_MULTIPLIER", "1.0"))
+    
+    @classmethod
+    def get_animation_delay(cls, delay_type: str = "medium") -> float:
+        """Get animation delay with multiplier applied"""
+        from .timeout_helper import get_animation_delay
+        return get_animation_delay(delay_type, cls.ANIMATION_DELAY_MULTIPLIER)
 
     @classmethod
     def ensure_directories(cls):

@@ -168,7 +168,15 @@ class ChatGPTBrowserController:
             if "chatgpt.com" not in current_url and "chat.openai.com" not in current_url:
                 logger.info("Navigating to ChatGPT...")
                 await self.page.goto(
-                    "https://chatgpt.com", wait_until="domcontentloaded", timeout=60000
+                    "https://chatgpt.com", wait_until="networkidle", timeout=60000
+                )
+                # Wait for theme to be applied - check for dark mode class on html element
+                await self.page.wait_for_function(
+                    """() => {
+                        const html = document.querySelector('html');
+                        return html && (html.classList.contains('dark') || html.classList.contains('light'));
+                    }""",
+                    timeout=5000
                 )
             else:
                 logger.info(f"Already on ChatGPT: {current_url}")
@@ -313,6 +321,10 @@ class ChatGPTBrowserController:
             
             # Launch Chrome with ChatGPT URL directly
             cmd.append("https://chatgpt.com")
+            
+            # Log the exact command being run
+            logger.info(f"Running command: {' '.join(cmd)}")
+            
             process = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             logger.info("Chrome launched with debugging port")
             
@@ -438,15 +450,24 @@ class ChatGPTBrowserController:
         if not clicked:
             # Fallback: navigate directly
             await self.page.goto("https://chatgpt.com/", wait_until="networkidle")
+            # Wait for theme to be applied
+            await self.page.wait_for_function(
+                """() => {
+                    const html = document.querySelector('html');
+                    return html && (html.classList.contains('dark') || html.classList.contains('light'));
+                }""",
+                timeout=5000
+            )
 
-        # Wait for page to stabilize (theme, etc.)
-        await asyncio.sleep(1.5)  # Allow theme to load
-        
-        # Wait for input to be ready
+        # Wait for input to be ready and page to be interactive
         await self.page.wait_for_selector("#prompt-textarea", state="visible")
         
-        # Additional stabilization wait
-        await asyncio.sleep(0.5)
+        # Wait for any animations to complete
+        await self.page.wait_for_function(
+            """() => !document.querySelector('body').classList.contains('loading')""",
+            timeout=5000
+        )
+        
         return "New chat started"
 
     async def send_message(self, message: str) -> str:
@@ -790,6 +811,11 @@ class ChatGPTBrowserController:
         if current and model.lower() in current.lower():
             logger.info(f"Already using model: {current}")
             return True
+        
+        # Special handling for GPT-4o (it's the default and might not be selectable)
+        if model.lower() in ["gpt-4o", "4o"] and (current and "4o" in current.lower()):
+            logger.info("GPT-4o is already the default model")
+            return True
 
         # Click model picker with improved selectors
         picker_selectors = [
@@ -822,36 +848,89 @@ class ChatGPTBrowserController:
                 continue
 
         if not clicked:
+            # Try the specific selector we know works
+            try:
+                model_button = self.page.locator('[data-testid="model-switcher-dropdown-button"]').first
+                if await model_button.count() > 0 and await model_button.is_visible():
+                    await model_button.click()
+                    await asyncio.sleep(0.5)
+                    clicked = True
+                    logger.info("Opened model picker with data-testid selector")
+            except Exception:
+                pass
+                
+        if not clicked:
             logger.warning("Could not find model picker")
             return False
 
-        # Wait for menu to open with better detection
-        await self.page.wait_for_selector(
-            '[role="menu"], [role="listbox"], [data-radix-menu-content]',
-            state="visible",
-            timeout=5000,
-        )
-        await asyncio.sleep(1.0)  # Increased delay for animation
+        # Wait for menu to open - look for menuitem elements
+        try:
+            await self.page.wait_for_selector(
+                'div[role="menuitem"]',
+                state="visible",
+                timeout=5000,
+            )
+        except Exception:
+            logger.warning("Model menu did not appear")
+            return False
+            
+        await asyncio.sleep(0.5)  # Small delay for animation
 
-        # Enhanced model name mapping based on the UI screenshot
+        # Model name mapping based on actual ChatGPT UI (Jan 2025)
         model_map = {
-            "gpt-4": ["GPT-4", "gpt-4", "GPT 4"],
-            "gpt-4o": ["GPT-4o", "gpt-4o", "GPT 4o", "4o"],  # Map both "4o" and "gpt-4o"
+            # Main models
+            "gpt-4o": ["GPT-4o", "gpt-4o", "GPT 4o", "4o"],  # Default model
             "4o": ["GPT-4o", "gpt-4o", "GPT 4o"],  # Allow "4o" as shorthand
-            "o1": ["o1", "O1"],
-            "o1-preview": ["o1-preview", "O1 Preview", "o1 preview"],
-            "o1-mini": ["o1-mini", "O1 Mini", "o1 mini"],
-            "o3": ["o3", "O3"],
-            "o3-mini": ["o3-mini", "O3 Mini", "o3 mini"],
-            "o3-pro": ["o3-pro", "O3 Pro", "o3 pro"],
-            "o4-mini": ["o4-mini", "O4 Mini", "o4 mini"],
-            "o4-mini-high": ["o4-mini-high", "O4 Mini High", "o4 mini high"],
+            "o3": ["o3", "O3"],  # Advanced reasoning
+            "o3-pro": ["o3-pro", "O3-pro", "o3 pro"],  # Best at reasoning
+            "o4-mini": ["o4-mini", "O4-mini", "o4 mini"],  # Fastest at advanced reasoning
+            "o4-mini-high": ["o4-mini-high", "O4-mini-high", "o4 mini high"],  # Great at coding and visual reasoning
+            # More models menu
+            "gpt-4.5": ["GPT-4.5", "gpt-4.5", "GPT 4.5"],  # Research preview
+            "gpt-4.1": ["GPT-4.1", "gpt-4.1", "GPT 4.1"],  # Great for quick coding and analysis
+            "gpt-4.1-mini": ["GPT-4.1-mini", "gpt-4.1-mini", "GPT 4.1 mini"],  # Faster for everyday tasks
         }
 
         # Get possible UI texts for the model
         ui_models = model_map.get(model.lower(), [model])
         if not isinstance(ui_models, list):
             ui_models = [ui_models]
+
+        # Check if this is a model that requires "More models" submenu
+        more_models = ["gpt-4.5", "gpt-4.1", "gpt-4.1-mini"]
+        needs_more_menu = any(m in model.lower() for m in more_models)
+        
+        if needs_more_menu:
+            # First click "More models" option
+            try:
+                # Look for More models item - it might be a div with role="menuitem"
+                more_button_selectors = [
+                    'div[role="menuitem"]:has-text("More models")',
+                    'div:has-text("More models"):not(:has(div))',
+                    '[role="menuitem"]:has-text("More models")',
+                    'button:has-text("More models")',
+                ]
+                
+                more_clicked = False
+                for selector in more_button_selectors:
+                    more_button = self.page.locator(selector).first
+                    if await more_button.count() > 0 and await more_button.is_visible():
+                        # Try hovering first (some menus require hover)
+                        await more_button.hover()
+                        await asyncio.sleep(0.3)
+                        
+                        # Now click
+                        await more_button.click()
+                        await asyncio.sleep(1.0)  # Wait for submenu animation
+                        more_clicked = True
+                        logger.info(f"Clicked 'More models' submenu with selector: {selector}")
+                        break
+                
+                if not more_clicked:
+                    logger.warning("'More models' menu not found, trying direct selection")
+                    # Don't fail immediately - try to find the model anyway
+            except Exception as e:
+                logger.error(f"Failed to click 'More models': {e}")
 
         # Try to find and click the model option
         option_selectors = [
@@ -860,27 +939,93 @@ class ChatGPTBrowserController:
             'button[role="menuitem"]',
             'li[role="option"]',
             "[data-radix-menu-item]",
+            # Additional selectors for submenu items
+            'div:not(:has(div))',  # Leaf div nodes
+            'span:not(:has(span))',  # Leaf span nodes
         ]
 
         for ui_model in ui_models:
             for selector in option_selectors:
                 try:
                     # Try exact match first
-                    option = self.page.locator(f'{selector}:has-text("{ui_model}")').first
+                    if selector in ['div:not(:has(div))', 'span:not(:has(span))']:
+                        # For leaf nodes, use text-is for exact match
+                        option = self.page.locator(f'{selector}:text-is("{ui_model}")').first
+                    else:
+                        # For other selectors, use has-text
+                        option = self.page.locator(f'{selector}:has-text("{ui_model}")').first
+                    
                     if await option.count() > 0 and await option.is_visible():
+                        # For More models submenu items, might need to wait for them to be clickable
+                        if needs_more_menu:
+                            await option.hover()
+                            await asyncio.sleep(0.2)
+                        
                         await option.click()
                         await asyncio.sleep(1.5)  # Increased wait for selection to apply
 
                         # Verify selection with retry
-                        for _ in range(3):
+                        for retry in range(3):
                             await asyncio.sleep(0.5)
                             new_model = await self.get_current_model()
-                            if new_model and ui_model.lower() in new_model.lower():
-                                logger.info(f"Successfully selected model: {new_model}")
-                                return True
-                except Exception:
+                            if new_model:
+                                # Check if the selected model matches (handle variations)
+                                model_matched = False
+                                if ui_model.lower() in new_model.lower():
+                                    model_matched = True
+                                elif model.lower() in new_model.lower():
+                                    model_matched = True
+                                # Special case for GPT models
+                                elif "gpt" in model.lower() and "gpt" in new_model.lower():
+                                    # Extract version numbers and compare
+                                    import re
+                                    model_version = re.search(r'[\d.]+', model)
+                                    new_version = re.search(r'[\d.]+', new_model)
+                                    if model_version and new_version and model_version.group() == new_version.group():
+                                        model_matched = True
+                                
+                                if model_matched:
+                                    logger.info(f"Successfully selected model: {new_model}")
+                                    return True
+                            
+                            # If not matched and still retrying, wait a bit more
+                            if retry < 2:
+                                logger.debug(f"Model not yet updated, retrying... (attempt {retry + 1}/3)")
+                except Exception as e:
+                    logger.debug(f"Failed with selector {selector}: {e}")
                     continue
 
+        # If we still haven't found it, try one more time with a broader search
+        if needs_more_menu:
+            # Sometimes the submenu needs a second click or the items are loaded dynamically
+            try:
+                # Look for any element containing the model text
+                all_elements = self.page.locator(f'*:has-text("{model}")')
+                count = await all_elements.count()
+                logger.debug(f"Found {count} elements containing '{model}'")
+                
+                for i in range(min(count, 5)):  # Check first 5 matches
+                    elem = all_elements.nth(i)
+                    if await elem.is_visible():
+                        tag = await elem.evaluate("el => el.tagName")
+                        parent_tag = await elem.evaluate("el => el.parentElement ? el.parentElement.tagName : 'none'")
+                        text = await elem.text_content()
+                        logger.debug(f"  Element {i}: <{tag}> in <{parent_tag}>, text: '{text.strip()}'")
+                        
+                        # Try clicking if it looks like a menu item
+                        if tag.lower() in ['div', 'button', 'li', 'span'] and model in text:
+                            await elem.click()
+                            await asyncio.sleep(1.0)
+                            
+                            # Final check
+                            new_model = await self.get_current_model()
+                            if new_model and (model.lower() in new_model.lower() or 
+                                            any(variant.lower() in new_model.lower() for variant in ui_models)):
+                                logger.info(f"Successfully selected model via fallback: {new_model}")
+                                return True
+            except Exception as e:
+                logger.debug(f"Fallback search failed: {e}")
+        
         logger.warning(f"Model {model} not found in picker")
         return False
 
@@ -975,51 +1120,51 @@ class ChatGPTBrowserController:
             return None
 
     async def toggle_search_mode(self, enable: bool) -> bool:
-        """Toggle web search mode on or off"""
+        """Toggle web search mode via Tools menu"""
         if not self.page:
             await self.launch()
 
         try:
-            # Look for the search toggle
-            # ChatGPT uses different selectors over time, try multiple
-            toggle_selectors = [
-                'button[aria-label*="Search"]',
-                'button:has-text("Search the web")',
-                '[data-testid="search-toggle"]',
-                'label:has-text("Search")',
-            ]
-
-            for selector in toggle_selectors:
-                try:
-                    element = self.page.locator(selector).first
-                    if await element.count() > 0:
-                        # Check current state
-                        is_checked = (
-                            await element.is_checked()
-                            if await element.get_attribute("type") == "checkbox"
-                            else None
-                        )
-
-                        # If it's a button, check aria-pressed or similar
-                        if is_checked is None:
-                            aria_pressed = await element.get_attribute("aria-pressed")
-                            is_checked = aria_pressed == "true" if aria_pressed else None
-
-                        # Toggle if needed
-                        if is_checked is not None and is_checked != enable:
-                            await element.click()
-                            await asyncio.sleep(1.0)  # Increased wait for state change
-                            
-                            # Verify state changed
-                            await asyncio.sleep(0.5)
-
-                        return True
-                except Exception:
-                    continue
-
-            logger.warning("Search toggle not found")
-            return False
-
+            # First, open the Tools menu - need to be more specific with selector
+            # Based on error, the button has id="system-hint-button" and aria-label="Choose tool"
+            tools_button = self.page.locator('button[aria-label="Choose tool"]').first
+            if await tools_button.count() == 0:
+                # Try alternative selectors
+                tools_button = self.page.locator('#system-hint-button').first
+                if await tools_button.count() == 0:
+                    tools_button = self.page.locator('button.composer-btn:has-text("Tools")').first
+                
+            if await tools_button.count() > 0 and await tools_button.is_visible():
+                # Force click to bypass interception
+                await tools_button.click(force=True)
+                await asyncio.sleep(0.5)  # Wait for menu
+                
+                # Now find Web search option - it's a div in the menu
+                search_option = self.page.locator('div[role="menu"] div:has-text("Web search")').first
+                if await search_option.count() == 0:
+                    # Try more specific selector
+                    search_option = self.page.locator('div:text-is("Web search")').first
+                    
+                if await search_option.count() > 0 and await search_option.is_visible():
+                    # Web search is a toggle - clicking it enables/disables
+                    await search_option.click()
+                    # Wait for menu to close and UI to update
+                    await self.page.wait_for_selector(
+                        'div[role="menu"]',
+                        state="hidden",
+                        timeout=3000
+                    )
+                    # Small wait for any remaining transitions
+                    await self.page.wait_for_timeout(500)
+                    logger.info(f"Toggled web search mode")
+                    return True
+                else:
+                    logger.warning("Web search option not found in Tools menu")
+                    return False
+            else:
+                logger.warning("Tools button not found")
+                return False
+                
         except Exception as e:
             logger.error(f"Failed to toggle search mode: {e}")
             return False
@@ -1035,6 +1180,132 @@ class ChatGPTBrowserController:
         """
         # Web browsing and search mode are the same feature in ChatGPT
         return await self.toggle_search_mode(enable)
+    
+    async def enable_deep_research(self) -> bool:
+        """Enable Deep Research mode via Tools menu
+        
+        Note: Deep Research has a monthly quota (250/month)
+        """
+        if not self.page:
+            await self.launch()
+
+        try:
+            # First, open the Tools menu - use specific selector
+            tools_button = self.page.locator('button[aria-label="Choose tool"]').first
+            if await tools_button.count() == 0:
+                tools_button = self.page.locator('#system-hint-button').first
+                
+            if await tools_button.count() > 0 and await tools_button.is_visible():
+                await tools_button.click(force=True)
+                await asyncio.sleep(0.5)  # Wait for menu
+                
+                # Now find Deep research option - use the exact selector that works
+                research_option = self.page.locator('div:text-is("Deep research")').first
+                    
+                if await research_option.count() > 0 and await research_option.is_visible():
+                    await research_option.click()
+                    # Wait for Deep Research UI to appear
+                    try:
+                        await self.page.wait_for_selector(
+                            'text=/What are you researching/i',
+                            state="visible",
+                            timeout=5000
+                        )
+                    except Exception:
+                        # Alternative: wait for Sources button
+                        await self.page.wait_for_selector(
+                            'button:has-text("Sources")',
+                            state="visible", 
+                            timeout=5000
+                        )
+                    logger.info("Selected Deep Research mode")
+                    return True
+                else:
+                    # Fallback to less specific selector
+                    research_option = self.page.locator('div[role="menu"] div:has-text("Deep research")').first
+                    if await research_option.count() > 0 and await research_option.is_visible():
+                        await research_option.click()
+                        # Wait for Deep Research UI to appear
+                        try:
+                            await self.page.wait_for_selector(
+                                'text=/What are you researching/i',
+                                state="visible",
+                                timeout=5000
+                            )
+                        except Exception:
+                            # Alternative: wait for Sources button
+                            await self.page.wait_for_selector(
+                                'button:has-text("Sources")',
+                                state="visible", 
+                                timeout=5000
+                            )
+                        logger.info("Selected Deep Research mode")
+                        return True
+                    else:
+                        logger.warning("Deep research option not found in Tools menu")
+                        return False
+            else:
+                logger.warning("Tools button not found")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Failed to enable deep research: {e}")
+            return False
+    
+    async def get_quota_remaining(self, mode: str = "deep_research") -> int | None:
+        """Get remaining quota for Deep Research or other limited modes
+        
+        Args:
+            mode: The mode to check quota for ("deep_research", etc.)
+            
+        Returns:
+            Number of remaining uses, or None if not found
+        """
+        if not self.page:
+            await self.launch()
+            
+        try:
+            # Open Tools menu
+            tools_button = self.page.locator('button[aria-label="Choose tool"]').first
+            if await tools_button.count() == 0:
+                tools_button = self.page.locator('#system-hint-button').first
+                
+            if await tools_button.count() > 0 and await tools_button.is_visible():
+                await tools_button.click(force=True)
+                await asyncio.sleep(0.5)
+                
+                # Look for the quota text - appears as tooltip or in menu
+                if mode == "deep_research":
+                    # Hover over Deep research to see tooltip
+                    research_option = self.page.locator('div[role="menu"] div:has-text("Deep research")').first
+                    if await research_option.count() == 0:
+                        research_option = self.page.locator('div:text-is("Deep research")').first
+                        
+                    if await research_option.count() > 0:
+                        await research_option.hover()
+                        await asyncio.sleep(0.5)
+                        
+                        # Look for tooltip with quota info (e.g. "248 left")
+                        quota_text = self.page.locator('[role="tooltip"]:has-text("left")').first
+                        if await quota_text.count() == 0:
+                            # Try looking for text near Deep research
+                            quota_text = self.page.locator('div:has-text("left"):near(div:has-text("Deep research"))').first
+                            
+                        if await quota_text.count() > 0:
+                            text = await quota_text.text_content()
+                            # Extract number from text like "248 left"
+                            import re
+                            match = re.search(r'(\d+)\s*left', text)
+                            if match:
+                                return int(match.group(1))
+                
+                # Close menu by pressing Escape
+                await self.page.keyboard.press("Escape")
+                
+        except Exception as e:
+            logger.error(f"Failed to get quota: {e}")
+            
+        return None
 
     async def upload_file(self, file_path: str) -> bool:
         """Upload a file to the current conversation"""
