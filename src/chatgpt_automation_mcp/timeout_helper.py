@@ -14,9 +14,9 @@ def get_default_timeout(model: str = None, mode: str = None, operation: str = "r
     Returns:
         Timeout in seconds
     """
-    # Deep Research mode: Real data shows up to 2 hours worst case
+    # Deep Research mode: Real data shows up to 6 hours worst case
     if mode and "deep_research" in mode.lower():
-        return 7200  # 2 hours (users report 2-6 hour waits)
+        return 21600  # 6 hours (users report 2-6 hour waits, we need to cover worst case!)
     
     # Model-specific timeouts (based on REAL user reports with web search)
     if model:
