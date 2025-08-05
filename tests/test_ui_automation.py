@@ -11,7 +11,7 @@ from pathlib import Path
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.chatgpt_automation_mcp.browser_controller import ChatGPTBrowserController
+from chatgpt_automation_mcp.browser_controller import ChatGPTBrowserController
 
 
 async def test_model_selection():

@@ -3,7 +3,8 @@
 
 import asyncio
 import logging
-from src.chatgpt_automation_mcp.browser_controller import ChatGPTBrowserController
+from chatgpt_automation_mcp.browser_controller import ChatGPTBrowserController
+from chatgpt_automation_mcp.animation_config import get_delay
 
 logging.basicConfig(
     level=logging.INFO,

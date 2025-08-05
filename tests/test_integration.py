@@ -6,7 +6,7 @@ import pytest
 import logging
 from pathlib import Path
 from datetime import datetime
-from src.chatgpt_automation_mcp.browser_controller import ChatGPTBrowserController
+from chatgpt_automation_mcp.browser_controller import ChatGPTBrowserController
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

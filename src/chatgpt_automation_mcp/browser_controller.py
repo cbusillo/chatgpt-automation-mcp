@@ -91,10 +91,10 @@ class ChatGPTBrowserController:
                             self.page = await self.context.new_page()
                             logger.info("Created new tab in existing browser")
                     else:
-                        # No contexts, create one
-                        self.context = await self.browser.new_context()
-                        self.page = await self.context.new_page()
-                        logger.info("Created new context in CDP browser")
+                        # No contexts found - this shouldn't happen with CDP
+                        # The browser should have at least one default context
+                        logger.error("No contexts found in CDP browser - this is unexpected")
+                        raise Exception("CDP browser has no contexts. Please ensure Chrome is properly launched.")
                     
                     logger.info("Successfully connected via CDP")
                     self.is_cdp_connection = True
@@ -135,10 +135,9 @@ class ChatGPTBrowserController:
                                     self.page = await self.context.new_page()
                                     logger.info("Created new tab in existing browser after Chrome launch")
                             else:
-                                # No contexts, create one
-                                self.context = await self.browser.new_context()
-                                self.page = await self.context.new_page()
-                                logger.info("Created new context in CDP browser after Chrome launch")
+                                # No contexts found - this shouldn't happen with CDP
+                                logger.error("No contexts found in CDP browser after Chrome launch")
+                                raise Exception("CDP browser has no contexts after launch. Please check Chrome startup.")
                             
                             logger.info("Successfully connected via CDP after launching Chrome")
                             self.is_cdp_connection = True
@@ -452,14 +451,6 @@ class ChatGPTBrowserController:
         if not clicked:
             # Fallback: navigate directly
             await self.page.goto("https://chatgpt.com/", wait_until="networkidle")
-            # Wait for theme to be applied
-            await self.page.wait_for_function(
-                """() => {
-                    const html = document.querySelector('html');
-                    return html && (html.classList.contains('dark') || html.classList.contains('light'));
-                }""",
-                timeout=5000
-            )
 
         # Wait for input to be ready and page to be interactive
         await self.page.wait_for_selector("#prompt-textarea", state="visible")
@@ -1090,7 +1081,7 @@ class ChatGPTBrowserController:
                 # Look for close sidebar button
                 close_button = self.page.locator('[data-testid="close-sidebar-button"]').first
                 if await close_button.count() > 0 and await close_button.is_visible():
-                    await close_button.click()
+                    await close_button.click(force=True)  # Force click to bypass interception
                     await asyncio.sleep(get_delay("sidebar_animation"))  # Wait for animation
                     logger.info("Closed sidebar")
                     return True
