@@ -369,6 +369,16 @@ rm -rf ~/.config/google-chrome-automation                       # Linux
 - Check message contains research keywords: `latest`, `current`, `research`, etc.
 - Web search may already be enabled (not an error)
 
+### Known CDP Connection Limitations
+**UI Rendering Issues with CDP Mode**
+- When using CDP mode (required to bypass Cloudflare), some UI elements may not render correctly
+- Sidebar icons may appear invisible or white-on-white
+- Theme may appear inconsistent (mix of light/dark mode)
+- **This is a known limitation** of Chrome DevTools Protocol connections
+- **The automation remains fully functional** despite visual issues
+- This cannot be fixed from our side - it's a fundamental CDP limitation
+- If you need proper UI visibility, you would need to use regular Playwright mode (which gets blocked by Cloudflare)
+
 ### Error Recovery
 - Error recovery is automatic and logged at INFO level
 - Set `CHATGPT_LOG_LEVEL=DEBUG` for detailed recovery information
