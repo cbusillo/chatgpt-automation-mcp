@@ -68,4 +68,6 @@ Chrome-Automation/
 
 # Development artifacts
 *.bak
-*.orig
+*.orig# Generated test reports
+test_status_report.md
+tests/test_screenshots/

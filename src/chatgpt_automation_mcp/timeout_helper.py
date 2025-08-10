@@ -7,7 +7,7 @@ def get_default_timeout(model: str = None, mode: str = None, operation: str = "r
     Get appropriate timeout based on model, mode, and operation type
     
     Args:
-        model: The model name (e.g., "o3-pro", "gpt-4.1")
+        model: The model name (e.g., "gpt-5", "gpt-5-thinking", "gpt-5-pro")
         mode: The mode (e.g., "deep_research", "web_search")
         operation: The operation type (e.g., "response", "thinking")
     
@@ -18,42 +18,38 @@ def get_default_timeout(model: str = None, mode: str = None, operation: str = "r
     if mode and "deep_research" in mode.lower():
         return 21600  # 6 hours (users report 2-6 hour waits, we need to cover worst case!)
     
-    # Model-specific timeouts (based on REAL user reports with web search)
+    # Model-specific timeouts
     if model:
         model_lower = model.lower()
         
-        # o3-pro: SLOWEST - Users report up to 20 minutes + queue time
-        if "o3-pro" in model_lower or "o3 pro" in model_lower:
-            return 3600  # 60 minutes (pro is slower than standard o3!)
+        # GPT-5 family
+        if "gpt-5-pro" in model_lower or "gpt 5 pro" in model_lower:
+            return 1800  # 30 minutes (Pro models need extensive time)
+        elif "gpt-5-thinking" in model_lower or "gpt 5 thinking" in model_lower:
+            return 900  # 15 minutes (Thinking models need time for reasoning)
+        elif "gpt-5" in model_lower or "gpt 5" in model_lower or model_lower == "5":
+            return 300  # 5 minutes (Standard model, good balance)
         
-        # o3: Can take up to 14 min thinking time + queue
-        elif "o3" in model_lower and "mini" not in model_lower:
-            return 1200  # 20 minutes (standard o3 is faster than pro)
-        
-        # GPT-4.1: Large context processing
-        elif "gpt-4.1" in model_lower or "gpt 4.1" in model_lower:
-            if "mini" in model_lower:
-                return 180  # 3 minutes for mini variant
-            else:
-                return 300  # 5 minutes for full version
-        
-        # o4-mini variants: Faster but still need some time
+        # o-series reasoning models
+        elif "o3-pro" in model_lower or "o3 pro" in model_lower:
+            return 900  # 15 minutes (Legacy reasoning expert)
+        elif "o3" in model_lower:
+            return 600  # 10 minutes (Advanced reasoning)
         elif "o4-mini" in model_lower or "o4 mini" in model_lower:
-            if "high" in model_lower:
-                return 180  # 3 minutes for high variant
-            else:
-                return 120  # 2 minutes for standard
+            return 60  # 1 minute (Fastest reasoning model)
         
-        # GPT-4.5: Creative tasks can take time
+        # GPT-4 family
         elif "gpt-4.5" in model_lower or "gpt 4.5" in model_lower:
-            return 180  # 3 minutes
-        
-        # GPT-4o: Fast multimodal
-        elif "gpt-4o" in model_lower or "gpt 4o" in model_lower or "4o" in model_lower:
-            return 120  # 2 minutes
+            return 180  # 3 minutes (Writing and exploration)
+        elif "gpt-4.1-mini" in model_lower or "gpt 4.1 mini" in model_lower:
+            return 60  # 1 minute (Fastest everyday tasks)
+        elif "gpt-4.1" in model_lower or "gpt 4.1" in model_lower:
+            return 90  # 1.5 minutes (Quick coding and analysis)
+        elif "gpt-4o" in model_lower or "4o" in model_lower:
+            return 120  # 2 minutes (Legacy model)
     
     # Default timeout for unknown models
-    return 120  # 2 minutes
+    return 120  # 2 minutes (conservative default)
 
 
 def get_animation_delay(delay_type: str = "medium", multiplier: float = 1.0) -> float:

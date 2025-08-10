@@ -68,6 +68,7 @@ class ChatGPTBrowserController:
                     # Use full URL with http:// prefix  
                     cdp_url = self.config.CDP_URL
                     if not cdp_url.startswith('http'):
+                        # noinspection HttpUrlsUsage
                         cdp_url = f"http://{cdp_url}"
                     self.browser = await self.playwright.chromium.connect_over_cdp(
                         cdp_url
@@ -112,6 +113,7 @@ class ChatGPTBrowserController:
                             # Use full URL with http:// prefix  
                             cdp_url = self.config.CDP_URL
                             if not cdp_url.startswith('http'):
+                                # noinspection HttpUrlsUsage
                                 cdp_url = f"http://{cdp_url}"
                             self.browser = await self.playwright.chromium.connect_over_cdp(
                                 cdp_url
@@ -153,23 +155,26 @@ class ChatGPTBrowserController:
                         self.context = None
                         self.page = None
             
-            # Regular launch if CDP not used or failed
-            if not self.browser and not self.config.USE_CDP:
-                # Only launch Chromium if CDP is explicitly disabled
-                # Otherwise fail - Chromium won't work with Cloudflare
-                logger.error("CDP connection required for ChatGPT automation (Cloudflare protection)")
-                raise Exception("Cannot connect to Chrome. Please ensure Chrome is running or CDP is configured correctly.")
-
-            # Check if we have a browser connection
+            # Fallback handling if CDP failed
             if not self.browser:
-                raise Exception("Failed to establish browser connection. Chrome with debugging port is required.")
+                if self.config.USE_CDP:
+                    # CDP required but failed - this is an error
+                    logger.error("CDP connection required for ChatGPT automation (Cloudflare protection)")
+                    raise Exception("Cannot connect to Chrome. Please ensure Chrome is running or CDP is configured correctly.")
+                else:
+                    # CDP explicitly disabled - use Playwright launch (won't work with ChatGPT but useful for other testing)
+                    logger.info("Using Playwright browser launch (CDP disabled - note: won't work with ChatGPT)")
+                    await self._launch_playwright_browser()
             
             # Navigate to ChatGPT only if not already there
             current_url = self.page.url if self.page else ""
             if "chatgpt.com" not in current_url and "chat.openai.com" not in current_url:
                 logger.info("Navigating to ChatGPT...")
+                # Use more lenient wait strategy in test mode
+                wait_until = "domcontentloaded" if self.config.TEST_MODE else "networkidle"
+                timeout = 30000 if self.config.TEST_MODE else 60000
                 await self.page.goto(
-                    "https://chatgpt.com", wait_until="networkidle", timeout=60000
+                    "https://chatgpt.com", wait_until=wait_until, timeout=timeout
                 )
                 # Wait for theme to be applied - check for dark mode class on html element
                 await self.page.wait_for_function(
@@ -181,6 +186,41 @@ class ChatGPTBrowserController:
                 )
             else:
                 logger.info(f"Already on ChatGPT: {current_url}")
+            
+            # Ensure we're on the main chat interface, not the intro page
+            await asyncio.sleep(1)  # Brief wait for page to load
+            try:
+                # Check if we're on intro page by looking for "Introducing" text
+                page_title = await self.page.title()
+                current_url = self.page.url
+                
+                if "Introducing" in page_title or current_url == "https://chatgpt.com/" or "/discovery" in current_url:
+                    logger.info("On intro/landing page, starting new chat...")
+                    # Don't use /c/new directly as it may fail - use the new chat button instead
+                    try:
+                        # Method 1: Click the "Ask anything" input to start a chat
+                        ask_input = self.page.locator('input[placeholder*="Ask"]').first
+                        if await ask_input.count() > 0:
+                            await ask_input.click()
+                            await ask_input.fill("Hello")
+                            await ask_input.press("Enter")
+                            await asyncio.sleep(3)
+                            logger.info("Started chat via input field")
+                        else:
+                            # Method 2: Try the New chat button in sidebar
+                            await self.new_chat()
+                    except Exception as e:
+                        logger.warning(f"Could not start new chat: {e}")
+                        # Fallback: Just navigate to base URL
+                        await self.page.goto("https://chatgpt.com", wait_until="networkidle", timeout=30000)
+                    
+                # Close sidebar if it's open to prevent blocking interactions
+                if await self.is_sidebar_open():
+                    logger.info("Closing sidebar to prevent UI blocking...")
+                    await self.toggle_sidebar(open=False)
+                    
+            except Exception as e:
+                logger.debug(f"Could not check/navigate from intro page: {e}")
 
             # Check if login is needed
             if await self._needs_login():
@@ -337,6 +377,77 @@ class ChatGPTBrowserController:
             logger.error(f"Failed to launch Chrome with debugging: {e}")
             return False
 
+    async def _launch_playwright_browser(self) -> None:
+        """Launch browser using Playwright (for testing)"""
+        try:
+            logger.info("Launching Playwright browser...")
+            
+            # Configure browser launch arguments with anti-detection measures
+            launch_args = [
+                "--no-first-run",
+                "--no-default-browser-check", 
+                "--disable-background-timer-throttling",
+                "--disable-backgrounding-occluded-windows",
+                "--disable-renderer-backgrounding",
+                "--disable-blink-features=AutomationControlled",  # Critical for Cloudflare
+                "--disable-dev-shm-usage",
+                "--disable-web-security",
+                "--disable-features=IsolateOrigins,site-per-process",
+                "--no-sandbox",
+            ]
+            
+            # Add user data directory for session persistence if not in test mode
+            if not self.config.TEST_MODE and self.config.PERSIST_SESSION:
+                user_data_dir = Path.home() / "Library" / "Application Support" / "Google" / "Chrome-Automation"
+                launch_args.append(f"--user-data-dir={user_data_dir}")
+                logger.info(f"Using user data directory: {user_data_dir}")
+            
+            # Launch browser
+            self.browser = await self.playwright.chromium.launch(
+                headless=self.config.HEADLESS,
+                args=launch_args,
+                timeout=30000,  # 30 second timeout
+            )
+            
+            # Create context with stealth options
+            context_options = {
+                "viewport": {"width": 1280, "height": 720},
+                "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+                "bypass_csp": True,  # Bypass content security policy
+                "ignore_https_errors": True,  # Ignore certificate errors
+                "java_script_enabled": True,
+            }
+            
+            # Load session state if not in test mode
+            if not self.config.TEST_MODE and self.config.PERSIST_SESSION:
+                session_path = self.config.SESSION_DIR / f"{self.config.SESSION_NAME}.json"
+                if session_path.exists():
+                    context_options["storage_state"] = str(session_path)
+                    logger.info(f"Loading session from: {session_path}")
+            
+            self.context = await self.browser.new_context(**context_options)
+            
+            # Create page
+            self.page = await self.context.new_page()
+            
+            # Set reasonable timeouts for testing
+            self.page.set_default_timeout(30000)  # 30 seconds
+            self.page.set_default_navigation_timeout(60000)  # 60 seconds
+            
+            logger.info("Playwright browser launched successfully")
+            
+        except Exception as e:
+            logger.error(f"Failed to launch Playwright browser: {e}")
+            # Clean up on failure
+            if self.context:
+                await self.context.close()
+            if self.browser:
+                await self.browser.close()
+            self.page = None
+            self.context = None
+            self.browser = None
+            raise
+
     async def _needs_login(self) -> bool:
         """Check if login is required"""
         try:
@@ -431,9 +542,27 @@ class ChatGPTBrowserController:
 
     async def _new_chat_impl(self) -> str:
         """Implementation of new chat logic"""
-        # Look for new chat button
+        # Check if we're on landing page
+        current_url = self.page.url
+        
+        # If on landing page or /c/new fails, start chat by typing
+        if current_url == "https://chatgpt.com/" or "/discovery" in current_url:
+            try:
+                # Look for the "Ask anything" input field on landing page
+                ask_input = self.page.locator('input[placeholder*="Ask"]').first
+                if await ask_input.count() > 0:
+                    logger.info("Starting chat from landing page input")
+                    await ask_input.click()
+                    await ask_input.fill("Hi")
+                    await ask_input.press("Enter")
+                    await asyncio.sleep(3)
+                    return "new"
+            except Exception as e:
+                logger.debug(f"Could not use landing page input: {e}")
+        
+        # Try new chat button (but avoid /c/new which may fail)
         new_chat_selectors = [
-            'a[href="/"]',
+            '[data-testid="create-new-chat-button"]',
             'button:has-text("New chat")',
             '[data-testid="new-chat-button"]',
         ]
@@ -441,19 +570,45 @@ class ChatGPTBrowserController:
         clicked = False
         for selector in new_chat_selectors:
             try:
-                if await self.page.locator(selector).count() > 0:
-                    await self.page.click(selector)
+                element = self.page.locator(selector).first
+                if await element.count() > 0 and await element.is_visible():
+                    await element.click(force=True)
                     clicked = True
+                    await asyncio.sleep(2)
                     break
             except Exception:
                 continue
 
         if not clicked:
-            # Fallback: navigate directly
+            # Fallback: navigate to base and start typing
+            logger.info("Using fallback - navigating to base URL")
             await self.page.goto("https://chatgpt.com/", wait_until="networkidle")
+            await asyncio.sleep(2)
+            
+            # Try to start a chat
+            try:
+                textarea = self.page.locator("#prompt-textarea").first
+                if await textarea.count() > 0:
+                    await textarea.click()
+                    await textarea.fill("Hello")
+                    await textarea.press("Enter")
+                    await asyncio.sleep(3)
+                    return "new"
+            except:
+                # Last resort - use Ask input
+                ask_input = self.page.locator('input[placeholder*="Ask"]').first
+                if await ask_input.count() > 0:
+                    await ask_input.click()
+                    await ask_input.fill("Hello")
+                    await ask_input.press("Enter")
+                    await asyncio.sleep(3)
+                    return "new"
 
-        # Wait for input to be ready and page to be interactive
-        await self.page.wait_for_selector("#prompt-textarea", state="visible")
+        # Wait for input to be ready (if we clicked new chat button)
+        try:
+            await self.page.wait_for_selector("#prompt-textarea", state="visible", timeout=5000)
+        except:
+            pass
         
         # Wait for any animations to complete
         await self.page.wait_for_function(
@@ -463,16 +618,34 @@ class ChatGPTBrowserController:
         
         return "New chat started"
 
-    async def send_message(self, message: str) -> str:
-        """Send a message to ChatGPT with error recovery"""
+    async def send_message(self, message: str, enable_web_search: bool = False, enable_deep_thinking: bool = False) -> str:
+        """Send a message to ChatGPT with optional web search or deep thinking
+        
+        Args:
+            message: The message to send
+            enable_web_search: If True, adds "search the web" to trigger web search
+            enable_deep_thinking: If True, adds "think deeply" to trigger deeper analysis
+            
+        Returns:
+            Status message
+        """
         if not self.page:
             await self.launch()
 
         try:
+            # Modify message based on flags
+            modified_message = message
+            if enable_web_search:
+                modified_message = f"{message}\n\n(Please search the web for this)"
+                logger.debug("Added web search trigger to message")
+            elif enable_deep_thinking:
+                modified_message = f"{message}\n\n(Please think deeply about this)"
+                logger.debug("Added deep thinking trigger to message")
+            
             # Find and fill the textarea
             textarea = self.page.locator("#prompt-textarea")
             await textarea.wait_for(state="visible")
-            await textarea.fill(message)
+            await textarea.fill(modified_message)
 
             # Find and click send button
             send_selectors = [
@@ -552,31 +725,71 @@ class ChatGPTBrowserController:
 
     async def _wait_for_response_impl(self, timeout: int) -> bool:
         """Implementation of wait for response logic"""
-        # Wait for thinking indicator to appear and disappear
-        thinking_selectors = [
-            '[data-testid="thinking-indicator"]',
-            ".animate-pulse",
-            'div:has-text("Thinking")',
-            'button:has-text("Stop generating")',
-        ]
-
-        # First wait for any thinking indicator
-        for selector in thinking_selectors:
+        # Strategy: Wait for response action buttons (copy, like, etc.) to appear
+        # These only show up when the response is complete
+        
+        # First check if "Stop generating" button exists (indicates active generation)
+        stop_button = self.page.locator('button:has-text("Stop generating")').first
+        generation_active = await stop_button.count() > 0 and await stop_button.is_visible()
+        
+        if generation_active:
+            logger.debug("Generation is active, waiting for it to complete...")
+            # Wait for the stop button to disappear
             try:
+                await self.page.wait_for_selector(
+                    'button:has-text("Stop generating")', 
+                    state="hidden", 
+                    timeout=timeout * 1000
+                )
+                logger.debug("Stop button disappeared, generation complete")
+            except PlaywrightTimeout:
+                logger.warning(f"Timeout waiting for generation to complete after {timeout}s")
+                return False
+        else:
+            logger.debug("No active generation detected")
+        
+        # Now wait for response action buttons to appear - these indicate completion
+        # Look for the copy button which appears in the response footer
+        completion_indicators = [
+            'div[data-message-author-role="assistant"] button[aria-label*="Copy"]',  # Copy button
+            'div[data-message-author-role="assistant"] button[aria-label*="copy"]',  # Alternative case
+            'div[data-message-author-role="assistant"] svg.icon-md',  # Action icons in response
+            'div[data-message-author-role="assistant"] button:has(svg)',  # Any button with icon
+        ]
+        
+        # Wait for any completion indicator to appear
+        response_complete = False
+        for selector in completion_indicators:
+            try:
+                element = self.page.locator(selector).first
+                # Quick check if already visible
+                if await element.count() > 0 and await element.is_visible():
+                    logger.debug(f"Response already complete, found: {selector}")
+                    response_complete = True
+                    break
+                    
+                # Wait for it to appear if not already visible
                 await self.page.wait_for_selector(selector, state="visible", timeout=5000)
+                logger.debug(f"Response complete, found indicator: {selector}")
+                response_complete = True
                 break
             except PlaywrightTimeout:
                 continue
-
-        # Then wait for it to disappear
-        for selector in thinking_selectors:
-            try:
-                await self.page.wait_for_selector(selector, state="hidden", timeout=timeout * 1000)
-            except PlaywrightTimeout:
+            except Exception as e:
+                logger.debug(f"Error checking {selector}: {e}")
                 continue
-
-        # Additional wait for network idle
-        await self.page.wait_for_load_state("networkidle", timeout=5000)
+        
+        if not response_complete:
+            logger.warning("Could not confirm response completion via action buttons")
+            # Fallback: wait a bit for any final rendering
+            await asyncio.sleep(1)
+        
+        # Final wait for network idle to ensure everything is loaded
+        try:
+            await self.page.wait_for_load_state("networkidle", timeout=3000)
+        except PlaywrightTimeout:
+            logger.debug("Network idle timeout, but continuing")
+        
         return True
 
     async def get_last_response(self) -> str | None:
@@ -616,10 +829,9 @@ class ChatGPTBrowserController:
             prefixes_to_remove = [
                 "ChatGPT said:",
                 "ChatGPT",
-                "GPT-4o said:",
-                "GPT-4 said:",
-                "o1 said:",
-                "o3 said:",
+                "GPT-5 said:",
+                "GPT-5 Thinking said:",
+                "GPT-5 Pro said:",
                 "said:"
             ]
             
@@ -671,10 +883,10 @@ class ChatGPTBrowserController:
                 if "You said:" in text or text.startswith("You said:"):
                     role = "user"
                     text = text.replace("You said:", "").strip()
-                elif any(prefix in text for prefix in ["ChatGPT said:", "GPT-4o said:", "said:"]):
+                elif any(prefix in text for prefix in ["ChatGPT said:", "GPT-5 said:", "said:"]):
                     role = "assistant"
                     # Remove the prefix
-                    for prefix in ["ChatGPT said:", "GPT-4o said:", "GPT-4 said:", "o1 said:", "o3 said:", "said:"]:
+                    for prefix in ["ChatGPT said:", "GPT-5 said:", "GPT-5 Thinking said:", "GPT-5 Pro said:", "said:"]:
                         if text.startswith(prefix):
                             text = text[len(prefix):].strip()
                             break
@@ -722,18 +934,53 @@ class ChatGPTBrowserController:
 
     async def _get_current_model_impl(self) -> str | None:
         """Implementation of model detection logic"""
-        # Primary method: Look for the model switcher button
+        # Primary method: Look for the model switcher button - try all visible instances
         try:
-            # The model switcher has a specific test ID
-            model_button = self.page.locator('[data-testid="model-switcher-dropdown-button"]').first
-            if await model_button.count() > 0 and await model_button.is_visible():
-                text = await model_button.text_content()
-                if text:
-                    # Clean up the text - remove "ChatGPT" prefix if present
-                    text = text.strip()
-                    if text.startswith("ChatGPT "):
-                        text = text[8:]  # Remove "ChatGPT " prefix
-                    return text
+            # The model switcher has a specific test ID - there might be multiple, get the visible one
+            model_buttons = self.page.locator('[data-testid="model-switcher-dropdown-button"]')
+            count = await model_buttons.count()
+            
+            for i in range(count):
+                model_button = model_buttons.nth(i)
+                if await model_button.is_visible():
+                    text = await model_button.text_content()
+                    if text:
+                        # Clean up the text - remove "ChatGPT " prefix if present
+                        text = text.strip()
+                        if text.startswith("ChatGPT "):
+                            text = text[8:]  # Remove "ChatGPT " prefix
+                        
+                        # Normalize model names to full format
+                        model_normalizations = {
+                            "5": "GPT-5",
+                            "5 Thinking": "GPT-5 Thinking",
+                            "5 Pro": "GPT-5 Pro",
+                            "4o": "GPT-4o",
+                            "4.5": "GPT-4.5",
+                            "4.1": "GPT-4.1",
+                            "4.1-mini": "GPT-4.1-mini",
+                            "o3": "o3",
+                            "o3-pro": "o3-pro",
+                            "o4-mini": "o4-mini",
+                            # Handle "ChatGPT X" format
+                            "ChatGPT 5": "GPT-5",
+                            "ChatGPT 5 Thinking": "GPT-5 Thinking",
+                            "ChatGPT 5 Pro": "GPT-5 Pro",
+                            "ChatGPT 4o": "GPT-4o",
+                            "ChatGPT o3": "o3",
+                            "ChatGPT o4-mini": "o4-mini",
+                        }
+                        
+                        # Try exact match first
+                        if text in model_normalizations:
+                            text = model_normalizations[text]
+                        # If starts with ChatGPT, try without prefix
+                        elif text.startswith("ChatGPT "):
+                            without_prefix = text[8:]
+                            if without_prefix in model_normalizations:
+                                text = model_normalizations[without_prefix]
+                        
+                        return text
         except Exception:
             pass
             
@@ -799,16 +1046,37 @@ class ChatGPTBrowserController:
 
     async def _select_model_impl(self, model: str) -> bool:
         """Implementation of model selection logic"""
+        # Close sidebar first to prevent UI blocking
+        if await self.is_sidebar_open():
+            logger.debug("Closing sidebar before model selection...")
+            await self.toggle_sidebar(open=False)
+            await asyncio.sleep(0.5)
+        
         # First check if we're already on the requested model
         current = await self.get_current_model()
-        if current and model.lower() in current.lower():
-            logger.info(f"Already using model: {current}")
-            return True
-        
-        # Special handling for GPT-4o (it's the default and might not be selectable)
-        if model.lower() in ["gpt-4o", "4o"] and (current and "4o" in current.lower()):
-            logger.info("GPT-4o is already the default model")
-            return True
+        if current:
+            current_lower = current.lower().replace("-", "").replace(" ", "").replace(".", "")
+            model_lower = model.lower().replace("-", "").replace(" ", "").replace(".", "")
+            
+            # Check various matching patterns
+            already_selected = (
+                model_lower in current_lower or
+                current_lower in model_lower or
+                # Handle shorthand matches
+                (model_lower == "gpt5" and current_lower == "gpt5") or
+                (model_lower == "gpt5thinking" and "thinking" in current_lower) or
+                (model_lower == "gpt5pro" and "pro" in current_lower) or
+                (model_lower == "gpt45" and "gpt45" in current_lower) or
+                (model_lower == "gpt41" and "gpt41" in current_lower and "mini" not in current_lower) or
+                (model_lower == "gpt41mini" and "gpt41mini" in current_lower) or
+                (model_lower == "o3" and current_lower == "o3" and "pro" not in current_lower) or
+                (model_lower == "o3pro" and "o3pro" in current_lower) or
+                (model_lower in ["o4mini", "o4-mini"] and "o4mini" in current_lower)
+            )
+            
+            if already_selected:
+                logger.info(f"Already using model: {current}")
+                return True
 
         # Click model picker with improved selectors
         picker_selectors = [
@@ -841,16 +1109,40 @@ class ChatGPTBrowserController:
                 continue
 
         if not clicked:
-            # Try the specific selector we know works
-            try:
-                model_button = self.page.locator('[data-testid="model-switcher-dropdown-button"]').first
-                if await model_button.count() > 0 and await model_button.is_visible():
-                    await model_button.click()
-                    await asyncio.sleep(get_delay("click_delay"))
-                    clicked = True
-                    logger.info("Opened model picker with data-testid selector")
-            except Exception:
-                pass
+            # Try the specific selector we know works - but get the VISIBLE one
+            for retry in range(3):
+                try:
+                    model_buttons = self.page.locator('[data-testid="model-switcher-dropdown-button"]')
+                    count = await model_buttons.count()
+                    
+                    # Try each button, preferring visible ones
+                    for i in range(count):
+                        model_button = model_buttons.nth(i)
+                        if await model_button.is_visible():
+                            try:
+                                await model_button.click()
+                                await asyncio.sleep(get_delay("click_delay"))
+                                clicked = True
+                                logger.info(f"Opened model picker with visible button {i} (attempt {retry + 1})")
+                                break
+                            except Exception as e:
+                                logger.debug(f"Failed to click visible button {i}: {e}")
+                    
+                    if not clicked and count > 0:
+                        # If no visible button worked, try force click on first
+                        model_button = model_buttons.first
+                        await model_button.click(force=True)
+                        await asyncio.sleep(get_delay("click_delay"))
+                        clicked = True
+                        logger.info(f"Opened model picker with force click (attempt {retry + 1})")
+                    
+                    if clicked:
+                        break
+                        
+                except Exception as e:
+                    logger.debug(f"Model picker click attempt {retry + 1} failed: {e}")
+                    if retry < 2:
+                        await asyncio.sleep(1)  # Wait before retry
                 
         if not clicked:
             logger.warning("Could not find model picker")
@@ -869,155 +1161,105 @@ class ChatGPTBrowserController:
             
         await asyncio.sleep(get_delay("model_picker_open"))  # Small delay for animation
 
-        # Model name mapping based on actual ChatGPT UI (Jan 2025)
+        # Model name mapping based on actual ChatGPT UI (August 2025)
+        # IMPORTANT: These must match EXACTLY what appears in the UI
         model_map = {
-            # Main models
-            "gpt-4o": ["GPT-4o", "gpt-4o", "GPT 4o", "4o"],  # Default model
-            "4o": ["GPT-4o", "gpt-4o", "GPT 4o"],  # Allow "4o" as shorthand
-            "o3": ["o3", "O3"],  # Advanced reasoning
-            "o3-pro": ["o3-pro", "O3-pro", "o3 pro"],  # Best at reasoning
-            "o4-mini": ["o4-mini", "O4-mini", "o4 mini"],  # Fastest at advanced reasoning
-            "o4-mini-high": ["o4-mini-high", "O4-mini-high", "o4 mini high"],  # Great at coding and visual reasoning
-            # More models menu
-            "gpt-4.5": ["GPT-4.5", "gpt-4.5", "GPT 4.5"],  # Research preview
-            "gpt-4.1": ["GPT-4.1", "gpt-4.1", "GPT 4.1"],  # Great for quick coding and analysis
-            "gpt-4.1-mini": ["GPT-4.1-mini", "gpt-4.1-mini", "GPT 4.1 mini"],  # Faster for everyday tasks
+            # GPT-5 models (current) - in main menu
+            "gpt-5": ["GPT-5"],
+            "5": ["GPT-5"],
+            "gpt-5-thinking": ["GPT-5 Thinking"],
+            "thinking": ["GPT-5 Thinking"],
+            "gpt-5-pro": ["GPT-5 Pro"],
+            "pro": ["GPT-5 Pro"],
+            
+            # Legacy models - exact text from submenu
+            "o4-mini": ["o4-mini"],
+            "o4mini": ["o4-mini"],
+            "gpt-4.5": ["GPT-4.5"],
+            "4.5": ["GPT-4.5"],
+            "o3": ["o3"],
+            "o3-pro": ["o3-pro"],
+            "gpt-4.1": ["GPT-4.1"],
+            "4.1": ["GPT-4.1"],
+            "gpt-4.1-mini": ["GPT-4.1-mini"],
+            "4.1-mini": ["GPT-4.1-mini"],
         }
 
         # Get possible UI texts for the model
         ui_models = model_map.get(model.lower(), [model])
         if not isinstance(ui_models, list):
             ui_models = [ui_models]
-
-        # Check if this is a model that requires "More models" submenu
-        more_models = ["gpt-4.5", "gpt-4.1", "gpt-4.1-mini"]
-        needs_more_menu = any(m in model.lower() for m in more_models)
         
-        if needs_more_menu:
-            # First click "More models" option
-            try:
-                # Look for More models item - it might be a div with role="menuitem"
-                more_button_selectors = [
-                    'div[role="menuitem"]:has-text("More models")',
-                    'div:has-text("More models"):not(:has(div))',
-                    '[role="menuitem"]:has-text("More models")',
-                    'button:has-text("More models")',
-                ]
-                
-                more_clicked = False
-                for selector in more_button_selectors:
-                    more_button = self.page.locator(selector).first
-                    if await more_button.count() > 0 and await more_button.is_visible():
-                        # Try hovering first (some menus require hover)
-                        await more_button.hover()
-                        await asyncio.sleep(get_delay("hover_delay"))
-                        
-                        # Now click
-                        await more_button.click()
-                        await asyncio.sleep(get_delay("more_models_menu"))  # Wait for submenu animation
-                        more_clicked = True
-                        logger.info(f"Clicked 'More models' submenu with selector: {selector}")
-                        break
-                
-                if not more_clicked:
-                    logger.warning("'More models' menu not found, trying direct selection")
-                    # Don't fail immediately - try to find the model anyway
-            except Exception as e:
-                logger.error(f"Failed to click 'More models': {e}")
+        # Determine if model is in Legacy models submenu (August 2025 UI)
+        legacy_models = ["o4-mini", "o4mini", "gpt-4.5", "4.5", "gpt-4.1", "4.1", "gpt-4.1-mini", "4.1-mini", "o3", "o3-pro"]
+        needs_legacy_menu = model.lower() in legacy_models
+        
+        if needs_legacy_menu:
+            # Click/hover "Legacy models" to reveal the submenu
+            legacy_option = self.page.locator('[role="menuitem"]:has-text("Legacy models")').first
+            if await legacy_option.count() > 0 and await legacy_option.is_visible():
+                # Try clicking first (some menus need click)
+                try:
+                    await legacy_option.click()
+                    await asyncio.sleep(get_delay("more_models_menu"))  # Give submenu time to appear
+                    logger.debug("Clicked 'Legacy models' to show submenu")
+                except Exception as e:
+                    # If click fails, try hover
+                    logger.debug(f"Click failed ({e}), trying hover...")
+                    await legacy_option.hover()
+                    await asyncio.sleep(get_delay("more_models_menu"))
+                    logger.debug("Hovered over 'Legacy models' to show submenu")
+            else:
+                logger.warning("Legacy models menu item not found")
 
         # Try to find and click the model option
-        option_selectors = [
-            'div[role="menuitem"]',
-            'div[role="option"]',
-            'button[role="menuitem"]',
-            'li[role="option"]',
-            "[data-radix-menu-item]",
-            # Additional selectors for submenu items
-            'div:not(:has(div))',  # Leaf div nodes
-            'span:not(:has(span))',  # Leaf span nodes
-        ]
-
+        # Models now have titles and subtitles concatenated, so we need to match the start of text
+        model_clicked = False
         for ui_model in ui_models:
-            for selector in option_selectors:
-                try:
-                    # Try exact match first
-                    if selector in ['div:not(:has(div))', 'span:not(:has(span))']:
-                        # For leaf nodes, use text-is for exact match
-                        option = self.page.locator(f'{selector}:text-is("{ui_model}")').first
-                    else:
-                        # For other selectors, use has-text
-                        option = self.page.locator(f'{selector}:has-text("{ui_model}")').first
-                    
-                    if await option.count() > 0 and await option.is_visible():
-                        # For More models submenu items, might need to wait for them to be clickable
-                        if needs_more_menu:
-                            await option.hover()
-                            await asyncio.sleep(get_delay("hover_quick"))
-                        
-                        await option.click()
-                        await asyncio.sleep(get_delay("model_selection"))  # Increased wait for selection to apply
-
-                        # Verify selection with retry
-                        for retry in range(3):
-                            await asyncio.sleep(get_delay("click_delay"))
-                            new_model = await self.get_current_model()
-                            if new_model:
-                                # Check if the selected model matches (handle variations)
-                                model_matched = False
-                                if ui_model.lower() in new_model.lower():
-                                    model_matched = True
-                                elif model.lower() in new_model.lower():
-                                    model_matched = True
-                                # Special case for GPT models
-                                elif "gpt" in model.lower() and "gpt" in new_model.lower():
-                                    # Extract version numbers and compare
-                                    import re
-                                    model_version = re.search(r'[\d.]+', model)
-                                    new_version = re.search(r'[\d.]+', new_model)
-                                    if model_version and new_version and model_version.group() == new_version.group():
-                                        model_matched = True
-                                
-                                if model_matched:
-                                    logger.info(f"Successfully selected model: {new_model}")
-                                    return True
-                            
-                            # If not matched and still retrying, wait a bit more
-                            if retry < 2:
-                                logger.debug(f"Model not yet updated, retrying... (attempt {retry + 1}/3)")
-                except Exception as e:
-                    logger.debug(f"Failed with selector {selector}: {e}")
-                    continue
-
-        # If we still haven't found it, try one more time with a broader search
-        if needs_more_menu:
-            # Sometimes the submenu needs a second click or the items are loaded dynamically
-            try:
-                # Look for any element containing the model text
-                all_elements = self.page.locator(f'*:has-text("{model}")')
-                count = await all_elements.count()
-                logger.debug(f"Found {count} elements containing '{model}'")
+            if model_clicked:
+                break
+            
+            # Look for menuitem that starts with the model name
+            options = await self.page.locator('[role="menuitem"]').all()
+            
+            for option in options:
+                text = await option.text_content()
+                if text and text.startswith(ui_model):
+                    # Found the model, click it
+                    await option.click()
+                    model_clicked = True
+                    await asyncio.sleep(get_delay("model_selection"))  # Wait for model to switch
+                    await asyncio.sleep(get_delay("model_verify"))  # Additional wait before verification
+                    break
+        
+        if model_clicked:
+            # Verify selection
+            new_model = await self.get_current_model()
+            if new_model:
+                # Normalize model names for comparison
+                new_model_normalized = new_model.replace(" ", "").replace("-", "").lower()
+                model_normalized = model.replace(" ", "").replace("-", "").lower()
                 
-                for i in range(min(count, 5)):  # Check first 5 matches
-                    elem = all_elements.nth(i)
-                    if await elem.is_visible():
-                        tag = await elem.evaluate("el => el.tagName")
-                        parent_tag = await elem.evaluate("el => el.parentElement ? el.parentElement.tagName : 'none'")
-                        text = await elem.text_content()
-                        logger.debug(f"  Element {i}: <{tag}> in <{parent_tag}>, text: '{text.strip()}'")
-                        
-                        # Try clicking if it looks like a menu item
-                        if tag.lower() in ['div', 'button', 'li', 'span'] and model in text:
-                            await elem.click()
-                            await asyncio.sleep(1.0)
-                            
-                            # Final check
-                            new_model = await self.get_current_model()
-                            if new_model and (model.lower() in new_model.lower() or 
-                                            any(variant.lower() in new_model.lower() for variant in ui_models)):
-                                logger.info(f"Successfully selected model via fallback: {new_model}")
-                                return True
-            except Exception as e:
-                logger.debug(f"Fallback search failed: {e}")
+                # Check if model changed successfully
+                if model_normalized in new_model_normalized or new_model_normalized in model_normalized:
+                    logger.info(f"Successfully selected model: {new_model}")
+                    return True
+                # Special handling for shorthand names
+                elif model.lower() == "5" and "gpt5" in new_model_normalized and "thinking" not in new_model_normalized and "pro" not in new_model_normalized:
+                    logger.info(f"Successfully selected base GPT-5: {new_model}")
+                    return True
+                elif model.lower() == "thinking" and "thinking" in new_model_normalized:
+                    logger.info(f"Successfully selected GPT-5 Thinking: {new_model}")
+                    return True
+                elif model.lower() == "pro" and "pro" in new_model_normalized:
+                    logger.info(f"Successfully selected GPT-5 Pro: {new_model}")
+                    return True
+                elif model.lower() in ["o4-mini", "o4mini"] and "o4mini" in new_model_normalized:
+                    logger.info(f"Successfully selected o4-mini: {new_model}")
+                    return True
+                else:
+                    logger.warning(f"Model selection verification failed. Expected {model}, got {new_model}")
+                    return False
         
         logger.warning(f"Model {model} not found in picker")
         return False
@@ -1037,19 +1279,36 @@ class ChatGPTBrowserController:
     async def is_sidebar_open(self) -> bool:
         """Check if the sidebar is currently open"""
         try:
-            # Check for sidebar state - look for the close button which only appears when open
+            # Multiple methods to detect sidebar state
+            
+            # Method 1: Check for close button (only visible when sidebar is open)
             close_button = self.page.locator('[data-testid="close-sidebar-button"]').first
             if await close_button.count() > 0 and await close_button.is_visible():
                 return True
             
-            # Alternative: check aria-expanded attribute
+            # Method 2: Check aria-expanded attribute
             sidebar_button = self.page.locator('[aria-controls="stage-slideover-sidebar"]').first
             if await sidebar_button.count() > 0:
                 aria_expanded = await sidebar_button.get_attribute('aria-expanded')
-                return aria_expanded == 'true'
+                if aria_expanded == 'true':
+                    return True
+            
+            # Method 3: Check if sidebar panel is visible
+            sidebar_panel = self.page.locator('[id="stage-slideover-sidebar"]').first
+            if await sidebar_panel.count() > 0:
+                # Check if it's actually visible (not hidden)
+                is_visible = await sidebar_panel.is_visible()
+                if is_visible:
+                    return True
+            
+            # Method 4: Check for sidebar nav element
+            sidebar_nav = self.page.locator('nav[aria-label="Chat history"]').first
+            if await sidebar_nav.count() > 0 and await sidebar_nav.is_visible():
+                return True
             
             return False
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Error checking sidebar state: {e}")
             return False
     
     async def toggle_sidebar(self, open: bool = True) -> bool:
@@ -1070,21 +1329,94 @@ class ChatGPTBrowserController:
                 return True
             
             if open:
-                # Look for open sidebar button
-                open_button = self.page.locator('[aria-label="Open sidebar"]').first
-                if await open_button.count() > 0 and await open_button.is_visible():
-                    await open_button.click()
-                    await asyncio.sleep(get_delay("sidebar_animation"))  # Wait for animation
-                    logger.info("Opened sidebar")
-                    return True
+                # Look for open sidebar button - multiple possible selectors
+                open_selectors = [
+                    '[aria-label="Open sidebar"]',
+                    'button[aria-label*="sidebar"]',
+                    'button[aria-controls="stage-slideover-sidebar"]:has([aria-expanded="false"])',
+                    'header button:first-child',  # Often the first button in header
+                ]
+                
+                for selector in open_selectors:
+                    open_button = self.page.locator(selector).first
+                    if await open_button.count() > 0 and await open_button.is_visible():
+                        await open_button.click()
+                        await asyncio.sleep(get_delay("sidebar_animation"))  # Wait for animation
+                        
+                        # Force a reflow to ensure icons render properly
+                        await self.page.evaluate("""
+                            () => {
+                                // Force browser to recalculate styles
+                                document.body.style.display = 'none';
+                                document.body.offsetHeight; // Trigger reflow
+                                document.body.style.display = '';
+                                
+                                // Ensure sidebar icons are visible
+                                const sidebarIcons = document.querySelectorAll('nav svg, nav button svg, aside svg');
+                                sidebarIcons.forEach(icon => {
+                                    if (icon.style.display === 'none' || icon.style.visibility === 'hidden') {
+                                        icon.style.display = '';
+                                        icon.style.visibility = 'visible';
+                                    }
+                                });
+                            }
+                        """)
+                        
+                        # Verify state changed
+                        new_state = await self.is_sidebar_open()
+                        if new_state:
+                            logger.info("Opened sidebar")
+                            return True
+                        else:
+                            logger.debug(f"Sidebar did not open with selector: {selector}")
             else:
-                # Look for close sidebar button
-                close_button = self.page.locator('[data-testid="close-sidebar-button"]').first
-                if await close_button.count() > 0 and await close_button.is_visible():
-                    await close_button.click(force=True)  # Force click to bypass interception
-                    await asyncio.sleep(get_delay("sidebar_animation"))  # Wait for animation
-                    logger.info("Closed sidebar")
-                    return True
+                # Look for close sidebar button - multiple possible selectors
+                close_selectors = [
+                    '[data-testid="close-sidebar-button"]',
+                    '[aria-label="Close sidebar"]',
+                    'button[aria-label*="Close"]',
+                    'nav button[aria-label*="sidebar"]',  # Button inside the nav
+                ]
+                
+                for selector in close_selectors:
+                    close_button = self.page.locator(selector).first
+                    if await close_button.count() > 0 and await close_button.is_visible():
+                        try:
+                            # Try normal click first
+                            await close_button.click(timeout=5000)
+                        except Exception as e:
+                            # If intercepted, use JavaScript click
+                            logger.debug(f"Normal click failed, using JavaScript: {e}")
+                            await self.page.evaluate("(el) => el.click()", await close_button.element_handle())
+                        
+                        await asyncio.sleep(get_delay("sidebar_animation"))  # Wait for animation
+                        
+                        # Force a reflow to fix any rendering issues
+                        await self.page.evaluate("""
+                            () => {
+                                // Force browser to recalculate styles
+                                document.body.style.display = 'none';
+                                document.body.offsetHeight; // Trigger reflow
+                                document.body.style.display = '';
+                                
+                                // Also check for sidebar icons and ensure they're visible
+                                const sidebarIcons = document.querySelectorAll('nav svg, nav button svg');
+                                sidebarIcons.forEach(icon => {
+                                    if (icon.style.display === 'none' || icon.style.visibility === 'hidden') {
+                                        icon.style.display = '';
+                                        icon.style.visibility = 'visible';
+                                    }
+                                });
+                            }
+                        """)
+                        
+                        # Verify state changed
+                        new_state = await self.is_sidebar_open()
+                        if not new_state:
+                            logger.info("Closed sidebar")
+                            return True
+                        else:
+                            logger.debug(f"Sidebar did not close with selector: {selector}")
             
             logger.warning(f"Could not {'open' if open else 'close'} sidebar")
             return False
@@ -1094,8 +1426,30 @@ class ChatGPTBrowserController:
             return False
 
     async def send_and_get_response(self, message: str, timeout: int = 120) -> str | None:
-        """Send message and wait for complete response"""
-        await self.send_message(message)
+        """Send message and wait for complete response
+        
+        Automatically enables web search for research-related queries.
+        
+        Args:
+            message: The message to send
+            timeout: Maximum time to wait for response in seconds
+            
+        Returns:
+            The response text or None if failed
+        """
+        # Check if message needs web search
+        research_keywords = [
+            "research", "latest", "current", "recent", "2025", "2024", "2026", 
+            "update", "new", "find", "search", "discover", "investigate",
+            "what's new", "recent changes", "current state", "up to date"
+        ]
+        message_lower = message.lower()
+        enable_web_search = any(kw in message_lower for kw in research_keywords)
+        
+        if enable_web_search:
+            logger.info("Auto-enabling web search due to research keywords")
+        
+        await self.send_message(message, enable_web_search=enable_web_search)
         await self.wait_for_response(timeout)
         return await self.get_last_response()
 
@@ -1112,97 +1466,64 @@ class ChatGPTBrowserController:
             logger.error(f"Failed to take screenshot: {e}")
             return None
 
-    async def toggle_search_mode(self, enable: bool) -> bool:
-        """Toggle web search mode via Tools menu"""
+    
+    async def enable_think_longer(self) -> bool:
+        """Enable Think Longer mode via attachment menu
+        
+        Returns:
+            True if Think Longer was enabled, False otherwise
+        """
         if not self.page:
             await self.launch()
 
         try:
-            # First check if web search is already in desired state
-            # When enabled, the placeholder changes to "Search the web"
-            input_placeholder = self.page.locator('input[placeholder="Search the web"]').first
-            search_the_web_text = self.page.locator('text="Search the web"').first
+            # Click the attachment/paperclip button
+            # Updated selectors based on current ChatGPT UI
+            attachment_selectors = [
+                '.composer-btn:not([aria-label*="Dictate"])',  # First composer button (not voice)
+                '.composer-btn:not([aria-label*="voice"])',     # Exclude voice button
+                'button[aria-label="Attach files"]',            # Legacy selector
+                'button:has(svg.icon-paperclip)',               # Legacy selector
+            ]
             
-            # Check current state
-            is_currently_enabled = False
-            if await input_placeholder.count() > 0 or await search_the_web_text.count() > 0:
-                is_currently_enabled = True
-                logger.info("Web search appears to be enabled (found 'Search the web' text)")
+            attachment_button = None
+            for selector in attachment_selectors:
+                button = self.page.locator(selector).first
+                if await button.count() > 0 and await button.is_visible():
+                    attachment_button = button
+                    break
             
-            if is_currently_enabled == enable:
-                logger.info(f"Web search already {'enabled' if enable else 'disabled'}")
-                return True
-            # First, open the Tools menu - need to be more specific with selector
-            # Based on error, the button has id="system-hint-button" and aria-label="Choose tool"
-            tools_button = self.page.locator('button[aria-label="Choose tool"]').first
-            if await tools_button.count() == 0:
-                # Try alternative selectors
-                tools_button = self.page.locator('#system-hint-button').first
-                if await tools_button.count() == 0:
-                    tools_button = self.page.locator('button.composer-btn:has-text("Tools")').first
-                
-            if await tools_button.count() > 0 and await tools_button.is_visible():
-                # Force click to bypass interception
-                await tools_button.click(force=True)
-                await asyncio.sleep(get_delay("menu_open"))  # Wait for menu
-                
-                # Find Web search option specifically (NOT Connected apps)
-                # Use exact text match to avoid confusion
-                search_option = self.page.locator('div[role="menu"] >> text="Web search"').first
-                if await search_option.count() == 0:
-                    # Try alternative selector
-                    search_option = self.page.locator('div[role="menu"] div:text-is("Web search")').first
-                    
-                if await search_option.count() > 0 and await search_option.is_visible():
-                    # Web search is a toggle - clicking it enables/disables
-                    await search_option.click()
-                    # Wait for menu to close and UI to update
-                    await self.page.wait_for_selector(
-                        'div[role="menu"]',
-                        state="hidden",
-                        timeout=3000
-                    )
-                    # Small wait for any remaining transitions
-                    await self.page.wait_for_timeout(500)
-                    
-                    # Verify the toggle worked by checking for "Search the web" text
-                    await asyncio.sleep(get_delay("toggle_verify"))  # Give UI time to update
-                    verification = await self.page.locator('text="Search the web"').count() > 0
-                    
-                    if verification and enable:
-                        logger.info("Successfully enabled web search - verified 'Search the web' is visible")
-                        return True
-                    elif not verification and not enable:
-                        logger.info("Successfully disabled web search")
-                        return True
-                    else:
-                        logger.warning(f"Web search toggle may have failed - expected {'enabled' if enable else 'disabled'} but verification {'passed' if verification else 'failed'}")
-                        return False
-                else:
-                    logger.warning("Web search/Connected apps option not found in Tools menu")
-                    return False
-            else:
-                logger.warning("Tools button not found")
+            if not attachment_button:
+                logger.warning("Attachment button not found")
                 return False
                 
+            await attachment_button.click()
+            await asyncio.sleep(get_delay("menu_open"))
+            
+            # Look for "Think longer" option in the menu
+            think_longer_selectors = [
+                'div[role="menuitem"]:has-text("Think longer")',
+                'button:has-text("Think longer")',
+                'div:text-is("Think longer")',
+            ]
+            
+            for selector in think_longer_selectors:
+                option = self.page.locator(selector).first
+                if await option.count() > 0 and await option.is_visible():
+                    await option.click()
+                    logger.info("Enabled Think Longer mode")
+                    await asyncio.sleep(get_delay("ui_update"))
+                    return True
+            
+            logger.warning("Think longer option not found in menu")
+            return False
+            
         except Exception as e:
-            logger.error(f"Failed to toggle search mode: {e}")
+            logger.error(f"Failed to enable think longer: {e}")
             return False
 
-    async def toggle_browsing_mode(self, enable: bool) -> bool:
-        """Toggle web browsing mode on or off (alias for toggle_search_mode)
-
-        Args:
-            enable: True to enable browsing, False to disable
-
-        Returns:
-            True if successful, False otherwise
-        """
-        # Web browsing and search mode are the same feature in ChatGPT
-        return await self.toggle_search_mode(enable)
-    
     async def enable_deep_research(self) -> bool:
-        """Enable Deep Research mode via Tools menu
+        """Enable Deep Research mode via attachment menu
         
         Note: Deep Research has a monthly quota (250/month)
         """
@@ -1210,20 +1531,40 @@ class ChatGPTBrowserController:
             await self.launch()
 
         try:
-            # First, open the Tools menu - use specific selector
-            tools_button = self.page.locator('button[aria-label="Choose tool"]').first
-            if await tools_button.count() == 0:
-                tools_button = self.page.locator('#system-hint-button').first
+            # Click the attachment/paperclip button
+            # Updated selectors based on current ChatGPT UI
+            attachment_selectors = [
+                '.composer-btn:not([aria-label*="Dictate"])',  # First composer button (not voice)
+                '.composer-btn:not([aria-label*="voice"])',     # Exclude voice button
+                'button[aria-label="Attach files"]',            # Legacy selector
+                'button:has(svg.icon-paperclip)',               # Legacy selector
+            ]
+            
+            attachment_button = None
+            for selector in attachment_selectors:
+                button = self.page.locator(selector).first
+                if await button.count() > 0 and await button.is_visible():
+                    attachment_button = button
+                    break
+            
+            if not attachment_button:
+                logger.warning("Attachment button not found")
+                return False
                 
-            if await tools_button.count() > 0 and await tools_button.is_visible():
-                await tools_button.click(force=True)
-                await asyncio.sleep(get_delay("menu_open"))  # Wait for menu
-                
-                # Now find Deep research option - use the exact selector that works
-                research_option = self.page.locator('div:text-is("Deep research")').first
-                    
-                if await research_option.count() > 0 and await research_option.is_visible():
-                    await research_option.click()
+            await attachment_button.click()
+            await asyncio.sleep(get_delay("menu_open"))
+            
+            # Look for "Deep research" option in the menu
+            research_selectors = [
+                'div[role="menuitem"]:has-text("Deep research")',
+                'button:has-text("Deep research")',
+                'div:text-is("Deep research")',
+            ]
+            
+            for selector in research_selectors:
+                option = self.page.locator(selector).first
+                if await option.count() > 0 and await option.is_visible():
+                    await option.click()
                     # Wait for Deep Research UI to appear
                     try:
                         await self.page.wait_for_selector(
@@ -1238,35 +1579,11 @@ class ChatGPTBrowserController:
                             state="visible", 
                             timeout=5000
                         )
-                    logger.info("Selected Deep Research mode")
+                    logger.info("Enabled Deep Research mode")
                     return True
-                else:
-                    # Fallback to less specific selector
-                    research_option = self.page.locator('div[role="menu"] div:has-text("Deep research")').first
-                    if await research_option.count() > 0 and await research_option.is_visible():
-                        await research_option.click()
-                        # Wait for Deep Research UI to appear
-                        try:
-                            await self.page.wait_for_selector(
-                                'text=/What are you researching/i',
-                                state="visible",
-                                timeout=5000
-                            )
-                        except Exception:
-                            # Alternative: wait for Sources button
-                            await self.page.wait_for_selector(
-                                'button:has-text("Sources")',
-                                state="visible", 
-                                timeout=5000
-                            )
-                        logger.info("Selected Deep Research mode")
-                        return True
-                    else:
-                        logger.warning("Deep research option not found in Tools menu")
-                        return False
-            else:
-                logger.warning("Tools button not found")
-                return False
+            
+            logger.warning("Deep research option not found in menu")
+            return False
                 
         except Exception as e:
             logger.error(f"Failed to enable deep research: {e}")
@@ -1285,12 +1602,24 @@ class ChatGPTBrowserController:
             await self.launch()
             
         try:
-            # Open Tools menu
-            tools_button = self.page.locator('button[aria-label="Choose tool"]').first
-            if await tools_button.count() == 0:
-                tools_button = self.page.locator('#system-hint-button').first
+            # Open Tools menu - try multiple selectors
+            tools_button_selectors = [
+                'button[aria-label="Choose tool"]',
+                '#system-hint-button',
+                'button.composer-btn',
+                'button[aria-label*="tool"]',
+                'button[aria-label*="Tools"]',
+                'button[title*="tool"]',
+            ]
+            
+            tools_button = None
+            for selector in tools_button_selectors:
+                button = self.page.locator(selector).first
+                if await button.count() > 0 and await button.is_visible():
+                    tools_button = button
+                    break
                 
-            if await tools_button.count() > 0 and await tools_button.is_visible():
+            if tools_button and await tools_button.count() > 0 and await tools_button.is_visible():
                 await tools_button.click(force=True)
                 await asyncio.sleep(get_delay("menu_open"))  # Wait for menu
                 if mode == "deep_research":
@@ -1405,6 +1734,8 @@ class ChatGPTBrowserController:
         try:
             # First, check if we have an assistant response to regenerate
             articles = await self.page.locator('main article').all()
+            logger.debug(f"Found {len(articles)} articles in conversation")
+            
             if len(articles) < 2:
                 logger.warning("No assistant response to regenerate")
                 return False
@@ -1418,23 +1749,138 @@ class ChatGPTBrowserController:
                 logger.warning("Last message is from user, cannot regenerate")
                 return False
             
-            # In the new UI, regenerate is in the model dropdown menu
-            # Click the model selector dropdown
-            model_button = self.page.locator('[data-testid="model-switcher-dropdown-button"]').first
-            if await model_button.count() == 0:
-                # Fallback selector
-                model_button = self.page.locator('header button[aria-label*="Model selector"]').first
+            logger.debug("Found assistant message to regenerate")
             
-            if await model_button.count() > 0 and await model_button.is_visible():
-                await model_button.click()
-                await asyncio.sleep(get_delay("menu_open"))  # Wait for menu to open
+            # Ensure the response is complete before looking for regenerate button
+            if await self._is_responding():
+                logger.info("Waiting for response to complete before regenerating...")
+                # Wait for response to finish (up to 30 seconds)
+                for _ in range(30):
+                    if not await self._is_responding():
+                        break
+                    await asyncio.sleep(1)
+                else:
+                    logger.warning("Response still generating after 30 seconds")
+                    return False
+            
+            # The regenerate functionality is in the three dots menu button
+            # This button has three circle SVG elements
+            clicked = False
+            menu_button = None
+            
+            # Take initial screenshot
+            await self.page.screenshot(path="regenerate_before_click.png")
+            logger.debug("Screenshot saved: regenerate_before_click.png")
+            
+            # Strategy 1: Find button with three circle elements (three dots menu)
+            logger.debug("Looking for three dots menu button...")
+            
+            # Get all buttons in the last article
+            all_buttons = await last_article.locator('button').all()
+            logger.debug(f"Found {len(all_buttons)} buttons in last article")
+            
+            # Look for button with three circle SVG elements
+            # The three dots menu is typically the last button in the action row
+            for i, button in reversed(list(enumerate(all_buttons))):
+                if await button.is_visible():
+                    # Count circle elements in this button
+                    circles = await button.locator('svg circle').count()
+                    aria_label = await button.get_attribute('aria-label') or ""
+                    
+                    logger.debug(f"  Button {i}: circles={circles}, aria-label='{aria_label}'")
+                    
+                    # The three dots menu has 3 circle elements and is NOT a copy/like/dislike button
+                    if circles == 3 and "Copy" not in aria_label and "Good" not in aria_label:
+                        logger.info(f"Found three dots menu button (button {i})")
+                        menu_button = button
+                        break
+                    elif "ChatGPT Actions" in aria_label or "More" in aria_label:
+                        logger.info(f"Found menu button by aria-label (button {i})")
+                        menu_button = button
+                        break
+            
+            # Strategy 2: Try specific selectors for the three dots button
+            if not menu_button:
+                logger.debug("Trying specific selectors for three dots button...")
+                three_dots_selectors = [
+                    'button[aria-label="ChatGPT Actions"]',
+                    'button[aria-label="More actions"]',
+                    'button[data-testid*="more"]',
+                    'button[data-testid*="actions"]',
+                    # Look for last button with SVG that's not copy/like/dislike
+                    'button:has(svg):not([aria-label*="Copy"]):not([aria-label*="Good"]):not([aria-label*="Bad"]):last-child',
+                ]
                 
-                # Look for "Try again" option in the dropdown
+                for selector in three_dots_selectors:
+                    button = last_article.locator(selector).first
+                    if await button.count() > 0 and await button.is_visible():
+                        logger.info(f"Found three dots button with selector: {selector}")
+                        menu_button = button
+                        break
+            
+            # Click the three dots menu button
+            if menu_button:
+                try:
+                    # Scroll into view if needed
+                    await menu_button.scroll_into_view_if_needed()
+                    await asyncio.sleep(get_delay("scroll_delay"))
+                    
+                    # Try hovering but don't fail if intercepted
+                    try:
+                        await menu_button.hover(timeout=2000)
+                        await asyncio.sleep(get_delay("hover_delay"))
+                        # Take screenshot while hovering
+                        await self.page.screenshot(path="regenerate_hovering.png")
+                        logger.debug("Screenshot saved: regenerate_hovering.png")
+                    except Exception as e:
+                        logger.debug(f"Hover failed (element intercepted), continuing: {e}")
+                    
+                    # Try different click methods
+                    try:
+                        # Method 1: Force click to bypass intercepts
+                        await menu_button.click(force=True)
+                        logger.info("Clicked three dots menu button with force=True")
+                    except Exception as e:
+                        logger.debug(f"Force click failed: {e}, trying JavaScript click")
+                        # Method 2: JavaScript click
+                        await self.page.evaluate("(el) => el.click()", await menu_button.element_handle())
+                        logger.info("Clicked three dots menu button with JavaScript")
+                    
+                    # Wait for menu to open
+                    await asyncio.sleep(get_delay("menu_open"))
+                    
+                    # Take screenshot after clicking
+                    await self.page.screenshot(path="regenerate_after_click.png")
+                    logger.debug("Screenshot saved: regenerate_after_click.png")
+                    
+                    # Check if menu opened
+                    menu_items = await self.page.locator('[role="menuitem"]').all()
+                    if len(menu_items) > 0:
+                        clicked = True
+                        logger.info(f"Menu opened with {len(menu_items)} items")
+                        
+                        # Log menu items for debugging
+                        for item in menu_items:
+                            item_text = await item.text_content()
+                            logger.debug(f"  Menu item: {item_text}")
+                    else:
+                        logger.warning("Menu did not open after clicking")
+                        
+                except Exception as e:
+                    logger.error(f"Failed to click three dots menu: {e}")
+                    await self.page.screenshot(path="regenerate_error.png")
+            else:
+                logger.error("Could not find three dots menu button")
+                await self.page.screenshot(path="regenerate_button_debug.png")
+                return False
+            
+            # If menu opened, look for "Try again" option
+            if clicked:
                 try_again_selectors = [
-                    'button:has-text("Try again")',
-                    'div[role="menuitem"]:has-text("Try again")',
+                    'text="Try again"',  # Exact text match
                     '[role="menuitem"]:has-text("Try again")',
-                    'button span:has-text("Try again")',
+                    'button:has-text("Try again")',
+                    'div:has-text("Try again")',
                 ]
                 
                 for selector in try_again_selectors:
@@ -1443,23 +1889,28 @@ class ChatGPTBrowserController:
                         await try_again.click()
                         logger.info("Clicked 'Try again' to regenerate response")
                         
-                        # Wait a bit for the UI to stabilize
-                        # Note: Regeneration can cause the sidebar to flicker
-                        await asyncio.sleep(1)
+                        # Wait for regeneration to start
+                        await asyncio.sleep(get_delay("ui_update"))
                         
-                        # Close any open dropdowns to prevent UI issues
+                        # Close any open dropdowns
                         await self.page.keyboard.press("Escape")
                         
                         return True
                 
                 # If not found, close the dropdown
                 await self.page.keyboard.press("Escape")
+                logger.warning("'Try again' option not found in menu")
+                await self.page.screenshot(path="regenerate_menu_debug.png")
             
-            logger.warning("Could not find regenerate option in model dropdown")
             return False
 
         except Exception as e:
             logger.error(f"Failed to regenerate response: {e}")
+            try:
+                await self.page.screenshot(path="regenerate_error_debug.png")
+                logger.debug("Error screenshot saved")
+            except:
+                pass
             return False
     
     async def _is_responding(self) -> bool:
@@ -1959,14 +2410,12 @@ class ChatGPTBrowserController:
                     op_result["result"] = await self.get_current_model()
                     op_result["success"] = op_result["result"] is not None
 
-                elif operation_name == "toggle_search_mode":
-                    enable = args.get("enable", True)
-                    op_result["result"] = await self.toggle_search_mode(enable)
+                elif operation_name == "enable_think_longer":
+                    op_result["result"] = await self.enable_think_longer()
                     op_result["success"] = op_result["result"]
 
-                elif operation_name == "toggle_browsing_mode":
-                    enable = args.get("enable", True)
-                    op_result["result"] = await self.toggle_browsing_mode(enable)
+                elif operation_name == "enable_deep_research":
+                    op_result["result"] = await self.enable_deep_research()
                     op_result["success"] = op_result["result"]
 
                 elif operation_name == "upload_file":

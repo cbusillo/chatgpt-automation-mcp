@@ -1,1 +1,1 @@
-# Test package
+"""Tests for ChatGPT Automation MCP"""

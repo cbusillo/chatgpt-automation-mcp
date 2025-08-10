@@ -4,48 +4,164 @@ version = "0.1.0"
 description = "MCP server for automating ChatGPT web interface via Playwright"
 readme = "README.md"
 requires-python = ">=3.12"
+license = { text = "MIT" }
+authors = [
+    { name = "ChatGPT Automation Contributors" }
+]
+keywords = ["mcp", "chatgpt", "automation", "playwright", "browser"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
 dependencies = [
     "aiohttp>=3.9.0",
-    "mcp>=0.1.0",
+    "mcp>=0.1.0", 
     "python-dotenv>=1.0.0",
     "playwright>=1.40.0",
     "websockets>=12.0",
 ]
 
+# Modern uv approach - consolidate all dev dependencies here
 [project.optional-dependencies]
-dev = [
-    "pytest>=7.4.0",
-    "pytest-asyncio>=0.21.0",
-    "ruff>=0.1.0",
+test = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.24.0",
+    "pytest-cov>=6.0.0",
+    "pytest-timeout>=2.3.1",
+    "pytest-xdist>=3.6.0",  # For parallel test execution
 ]
-
-[tool.uv]
-dev-dependencies = [
+dev = [
+    "chatgpt-automation-mcp[test]",  # Include test dependencies
+    "ruff>=0.7.0",
+    "mypy>=1.13.0",
     "ipython>=8.18.0",
-    "pytest>=8.0.0",
-    "pytest-asyncio>=0.23.0",
-    "pytest-cov>=4.1.0",
+    "pre-commit>=4.0.0",
+]
+docs = [
+    "mkdocs>=1.6.0",
+    "mkdocs-material>=9.5.0",
 ]
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
-[tool.ruff]
-line-length = 100
-target-version = "py312"
-
-[tool.ruff.lint]
-select = ["E", "F", "I", "N", "W", "UP"]
-ignore = ["E501"]  # Line too long - we set to 100
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-python_files = ["test_*.py", "*_test.py"]
-asyncio_mode = "auto"
-addopts = "-v"
-
+# Modern uv scripts - replaces old test runners
 [project.scripts]
 chatgpt-mcp = "chatgpt_automation_mcp.server:main"
-test-browser = "chatgpt_automation_mcp.browser_controller:test_browser_controller"
-run-tests = "run_tests:main"
+
+# Modern tool configurations
+[tool.uv]
+# Use uv for faster dependency resolution
+resolution = "highest"
+prerelease = "disallow"
+
+[tool.uv.sources]
+# Pin to stable versions for production use
+
+# Enhanced pytest configuration - consolidated from pytest.ini
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+addopts = [
+    "-v",
+    "--strict-markers",
+    "--strict-config", 
+    "--tb=short",
+    "--durations=10",
+    "--color=yes",
+    "--cov=src/chatgpt_automation_mcp",
+    "--cov-report=html",
+    "--cov-report=term-missing",
+    "--cov-fail-under=9",
+]
+markers = [
+    "browser: Tests requiring browser automation (may be slow)",
+    "integration: Full integration tests requiring working ChatGPT", 
+    "slow: Tests that may take several minutes",
+    "ui_dependent: Tests that depend on current ChatGPT UI",
+    "unit: Fast unit tests",
+    "smoke: Basic smoke tests for quick validation",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::PendingDeprecationWarning",
+]
+log_cli = true
+log_cli_level = "INFO"
+log_cli_format = "%(asctime)s [%(levelname)8s] %(name)s: %(message)s"
+log_cli_date_format = "%Y-%m-%d %H:%M:%S"
+
+# Modern Ruff configuration
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+exclude = [
+    ".git",
+    ".pytest_cache", 
+    ".venv",
+    "__pycache__",
+    "build",
+    "dist",
+]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "N",   # pep8-naming
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "PIE", # flake8-pie
+    "SIM", # flake8-simplify
+    "RET", # flake8-return
+]
+ignore = [
+    "E501", # Line too long (we use line-length = 100)
+    "B008", # Do not perform function calls in argument defaults
+    "RET504", # Unnecessary variable assignment before return
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*.py" = [
+    "B011",  # Do not call assert False since python -O removes these calls
+    "F401",  # Module imported but unused
+    "F811",  # Redefined while unused
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+# MyPy configuration for type checking
+[tool.mypy]
+python_version = "3.12"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = true
+strict_equality = true
+show_error_codes = true
+
+[[tool.mypy.overrides]]
+module = ["tests.*"]
+disallow_untyped_defs = false

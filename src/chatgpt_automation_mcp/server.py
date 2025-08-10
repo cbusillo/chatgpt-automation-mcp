@@ -73,12 +73,16 @@ async def list_tools() -> list[Tool]:
                         "type": "string",
                         "description": "Model to select",
                         "enum": [
+                            "gpt-5",
+                            "5",
+                            "gpt-5-thinking",
+                            "gpt-5-pro",
                             "gpt-4o",
+                            "4o",
+                            "gpt-4.5",
                             "o3",
                             "o3-pro",
                             "o4-mini",
-                            "o4-mini-high",
-                            "gpt-4.5",
                             "gpt-4.1",
                             "gpt-4.1-mini",
                         ],
@@ -109,7 +113,7 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="chatgpt_send_and_get_response",
-            description="Send a message to ChatGPT and wait for the complete response",
+            description="Send a message to ChatGPT and wait for the complete response. Automatically enables web search for messages containing research keywords (latest, current, recent, update, search, etc.)",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -141,34 +145,6 @@ async def list_tools() -> list[Tool]:
                     }
                 },
                 "required": [],
-            },
-        ),
-        Tool(
-            name="chatgpt_toggle_search",
-            description="Enable or disable web search mode (automatically enabled by chatgpt_send_and_get_response for research keywords)",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "enable": {
-                        "type": "boolean",
-                        "description": "True to enable web search, false to disable",
-                    }
-                },
-                "required": ["enable"],
-            },
-        ),
-        Tool(
-            name="chatgpt_toggle_browsing",
-            description="Enable or disable web browsing mode",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "enable": {
-                        "type": "boolean",
-                        "description": "True to enable web browsing, false to disable",
-                    }
-                },
-                "required": ["enable"],
             },
         ),
         Tool(
@@ -275,6 +251,16 @@ async def list_tools() -> list[Tool]:
             },
         ),
         Tool(
+            name="chatgpt_enable_think_longer",
+            description="Enable Think Longer mode for the next message (enhanced reasoning)",
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        Tool(
+            name="chatgpt_enable_deep_research",
+            description="Enable Deep Research mode for comprehensive web research (250/month quota)",
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        Tool(
             name="chatgpt_batch_operations",
             description="Execute multiple ChatGPT operations in sequence",
             inputSchema={
@@ -297,8 +283,8 @@ async def list_tools() -> list[Tool]:
                                         "get_conversation",
                                         "select_model",
                                         "get_current_model",
-                                        "toggle_search_mode",
-                                        "toggle_browsing_mode",
+                                        "enable_think_longer",
+                                        "enable_deep_research",
                                         "upload_file",
                                         "regenerate_response",
                                         "export_conversation",
@@ -382,26 +368,6 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
         elif name == "chatgpt_send_and_get_response":
             message = arguments["message"]
             
-            # Auto-enable web search if message seems to need current info
-            research_keywords = [
-                "research", "latest", "current", "recent", "2025", "2024", "2026", 
-                "update", "new", "find", "search", "discover", "investigate",
-                "what's new", "recent changes", "current state", "up to date"
-            ]
-            message_lower = message.lower()
-            matching_keywords = [kw for kw in research_keywords if kw in message_lower]
-            
-            if matching_keywords:
-                logger.info(f"Auto-enabling web search due to keywords: {matching_keywords}")
-                try:
-                    search_enabled = await ctrl.toggle_search_mode(True)
-                    if search_enabled:
-                        logger.info("Web search auto-enabled successfully")
-                    else:
-                        logger.info("Web search auto-enable returned false (may already be enabled)")
-                except Exception as e:
-                    logger.warning(f"Failed to auto-enable web search: {e}")
-            
             # Get current model to determine appropriate timeout
             current_model = await ctrl.get_current_model()
             
@@ -442,25 +408,6 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
                 return [TextContent(type="text", text=response)]
             else:
                 return [TextContent(type="text", text="No response found")]
-
-        elif name == "chatgpt_toggle_search":
-            enable = arguments["enable"]
-            success = await ctrl.toggle_search_mode(enable)
-            if success:
-                status = "enabled" if enable else "disabled"
-                result = f"Web search {status} successfully"
-            else:
-                # Provide more helpful error message - web search might already be in desired state
-                current_state = "already enabled" if enable else "already disabled"
-                result = f"Web search toggle returned false - may be {current_state} or UI changed"
-            return [TextContent(type="text", text=result)]
-
-        elif name == "chatgpt_toggle_browsing":
-            enable = arguments["enable"]
-            success = await ctrl.toggle_browsing_mode(enable)
-            status = "enabled" if enable else "disabled"
-            result = f"Web browsing {status}" if success else "Failed to toggle web browsing"
-            return [TextContent(type="text", text=result)]
 
         elif name == "chatgpt_upload_file":
             file_path = arguments["file_path"]
@@ -549,6 +496,22 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
                         type="text", text=f"Failed to delete conversation: {conversation_id}"
                     )
                 ]
+
+        elif name == "chatgpt_enable_think_longer":
+            success = await ctrl.enable_think_longer()
+
+            if success:
+                return [TextContent(type="text", text="Think Longer mode enabled for next message")]
+            else:
+                return [TextContent(type="text", text="Failed to enable Think Longer mode")]
+
+        elif name == "chatgpt_enable_deep_research":
+            success = await ctrl.enable_deep_research()
+
+            if success:
+                return [TextContent(type="text", text="Deep Research mode enabled")]
+            else:
+                return [TextContent(type="text", text="Failed to enable Deep Research mode")]
 
         elif name == "chatgpt_batch_operations":
             operations = arguments["operations"]

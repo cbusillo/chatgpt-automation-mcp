@@ -51,6 +51,14 @@ class Config:
     USE_CDP: bool = os.getenv("USE_CDP", "true").lower() == "true"
     CDP_URL: str = os.getenv("CDP_URL", "http://127.0.0.1:9222")
     
+    # Test mode detection
+    TEST_MODE: bool = (
+        os.getenv("TEST_MODE", "false").lower() == "true" or
+        os.getenv("PYTEST_CURRENT_TEST") is not None or
+        "pytest" in os.getenv("_", "") or
+        "test" in os.path.basename(os.getenv("VIRTUAL_ENV", ""))
+    )
+    
     # Animation delays
     ANIMATION_DELAY_MULTIPLIER: float = float(os.getenv("CHATGPT_ANIMATION_MULTIPLIER", "1.0"))
     
