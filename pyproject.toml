@@ -83,7 +83,10 @@ addopts = [
     "--cov-report=html",
     "--cov-report=term-missing",
     "--cov-fail-under=9",
+    "--timeout=300",  # 5 minute default timeout per test (browser automation needs time)
 ]
+timeout_method = "thread"  # Use thread-based timeout for async tests
+timeout_func_only = false  # Include setup/teardown in timeout
 markers = [
     "browser: Tests requiring browser automation (may be slow)",
     "integration: Full integration tests requiring working ChatGPT", 

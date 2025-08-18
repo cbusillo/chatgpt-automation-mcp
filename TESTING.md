@@ -2,9 +2,23 @@
 
 This document provides comprehensive guidance for running and maintaining the test suite for ChatGPT Automation MCP.
 
+## ⚠️ IMPORTANT: Current Test Status (August 2025)
+
+**Many tests are outdated due to UI changes!** See [@NEXT_PROMPT.md](../@NEXT_PROMPT.md) for current status.
+
+### Working Features ✅
+- URL-based model selection
+- Basic chat functions (send/receive messages)
+- Get current model
+
+### Broken Features ❌  
+- Think Longer mode (UI changed)
+- Deep Research mode (UI changed)
+- Some MCP tool integrations
+
 ## 🎯 Test Overview
 
-Our test suite provides **100% coverage** of all browser controller methods and comprehensive validation of MCP functionality with:
+Our test suite **NEEDS UPDATING** - previous coverage claims are no longer accurate:
 
 - **34 test functions** across **8 test files**
 - **26 browser methods** fully tested
@@ -35,7 +49,13 @@ Our test suite provides **100% coverage** of all browser controller methods and 
 
 ### Prerequisites
 
-**IMPORTANT**: Browser tests require Chrome running with debugging port:
+**RECOMMENDED**: Use Browser MCP for visual testing and exploration:
+```bash
+# Browser MCP is superior for testing - use it instead of Playwright MCP
+# It provides better screenshots, cleaner API, and more reliable element selection
+```
+
+For automated tests:
 ```bash
 # Start Chrome with debugging (required for browser tests)
 /Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome --remote-debugging-port=9222
@@ -297,23 +317,56 @@ async def test_new_feature(browser):
 - Run full suite before major releases
 - Parallelize tests when possible (future enhancement)
 
+## 🧪 TDD Approach (REQUIRED)
+
+### For Fixing Broken Features
+
+1. **Write failing test FIRST**:
+```python
+# tests/test_think_longer_tdd.py
+@pytest.mark.visual
+async def test_enable_think_longer():
+    """Test that Think Longer mode can be enabled"""
+    # This WILL fail initially - that's the point!
+    result = await controller.enable_think_longer()
+    assert result == True
+    # Add screenshot verification
+```
+
+2. **Use Browser MCP to explore**:
+```python
+# Use Claude with Browser MCP to find the UI
+mcp__browsermcp__browser_navigate(url="https://chatgpt.com")
+mcp__browsermcp__browser_snapshot()  # Find elements
+mcp__browsermcp__browser_screenshot()  # Visual confirmation
+```
+
+3. **Fix implementation** to make test pass
+4. **Document the fix** in code and tests
+
 ## 🎯 Maintenance
+
+### Immediate Priority (August 2025)
+
+- **URGENT**: Fix Think Longer and Deep Research modes
+- **Important**: Update all tests to match new UI
+- **Critical**: Create visual regression test suite using Browser MCP
 
 ### Regular Tasks
 
-- **Weekly**: Run full test suite, check for flaky tests
-- **Monthly**: Update selectors if ChatGPT UI changes
-- **Quarterly**: Review test coverage and add missing tests
-- **When needed**: Update timeouts based on model performance
+- **Daily**: Check if UI changed (it changes frequently!)
+- **Weekly**: Run visual verification tests
+- **Monthly**: Update selectors and URL patterns
+- **When UI breaks**: Use Browser MCP to find new elements
 
 ### Monitoring
 
 Watch for these indicators of needed maintenance:
 
-- Tests failing due to "element not found"
-- Increased timeout failures
-- New browser methods not covered by tests
-- New MCP tools without corresponding tests
+- Tests failing due to "element not found" (UI changed!)
+- URL patterns no longer working (check for new patterns)
+- New features appearing in ChatGPT (add support)
+- Screenshots showing unexpected UI (investigate changes)
 
 ## 📚 Additional Resources
 

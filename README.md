@@ -4,7 +4,7 @@ A Model Context Protocol (MCP) server for automating ChatGPT web interface using
 
 ## Features
 
-- 🌐 **Browser Automation**: Controls ChatGPT web interface via Playwright
+- 🌐 **Browser Automation**: Controls ChatGPT web interface via Playwright (Note: Browser MCP recommended for testing)
 - 🤖 **Model Selection**: Switch between GPT-5, GPT-5 Thinking, GPT-5 Pro, and legacy models (o3, o4-mini, GPT-4.5, etc.)
 - 💬 **Conversation Management**: New chats, send messages, get responses
 - 🔄 **Session Persistence**: Maintain login state across sessions
@@ -169,6 +169,17 @@ response = await chatgpt_send_and_get_response(
 
 ## Available Models (August 2025)
 
+### Model Selection Method
+**IMPORTANT**: Model selection now uses URL-based approach for reliability:
+```python
+# Direct URL navigation (much more reliable than UI navigation)
+https://chatgpt.com/?model=gpt-5
+https://chatgpt.com/?model=gpt-5-thinking
+https://chatgpt.com/?model=gpt-5-pro
+https://chatgpt.com/?model=o3
+https://chatgpt.com/?model=gpt-4-1  # Note: dash not dot
+```
+
 ### Current Models
 
 #### GPT-5 Family
@@ -176,26 +187,23 @@ response = await chatgpt_send_and_get_response(
 - **GPT-5 Thinking** - Get more thorough answers with extended reasoning (15 minute timeout)
 - **GPT-5 Pro** - Research-grade intelligence for most advanced tasks (30 minute timeout)
 
-### Legacy Models
+### Legacy Models (We Care About)
 
-#### GPT-4 Family
-- **GPT-4o** - Legacy model, still reliable for general tasks (2 minute timeout)
-- **GPT-4.5** - Good for writing and exploring ideas (3 minute timeout)
-- **GPT-4.1** - Great for quick coding and analysis (1.5 minute timeout)
-- **GPT-4.1-mini** - Faster for everyday tasks (1 minute timeout)
+#### Key Legacy Models
+- **GPT-4.1** - Large context window, great for long documents (use `gpt-4-1` in URL)
+- **o3** - Advanced reasoning model (10 minute timeout)
 
-#### o-Series Reasoning Models
-- **o3** - Uses advanced reasoning (10 minute timeout)
+#### Other Available (Less Important)
+- **GPT-4o** - Legacy model, superseded by GPT-5
+- **GPT-4.5** - Good for writing and exploring ideas
 - **o3-pro** - Legacy reasoning expert (15 minute timeout)
-- **o4-mini** - Fastest at advanced reasoning (1 minute timeout)
 
 ### Model Selection Tips
 - **Default choice**: `gpt-5` for most development and creative tasks
-- **Complex reasoning**: `gpt-5-thinking` or `o3-pro` for deep analysis
+- **Complex reasoning**: `gpt-5-thinking` or `o3` for deep analysis
 - **Critical research**: `gpt-5-pro` for the most sophisticated reasoning
-- **Quick tasks**: `o4-mini` or `gpt-4.1-mini` for fastest responses
-- **Writing focus**: `gpt-4.5` optimized for creative writing
-- **Quick access**: Use `5` as shorthand for `gpt-5`, `4o` for `gpt-4o`
+- **Large context**: `gpt-4.1` for documents exceeding standard limits
+- **Quick access**: Use `5` as shorthand for `gpt-5`, `thinking` for `gpt-5-thinking`
 
 ## Development
 
@@ -257,10 +265,12 @@ uv run ruff check . --fix
 ### Development Best Practices
 
 See [docs/DEVELOPMENT_BEST_PRACTICES.md](docs/DEVELOPMENT_BEST_PRACTICES.md) for important lessons learned about:
-- Visual verification testing with screenshots
+- **URL-based model selection** (breakthrough discovery!)
+- Visual verification testing with screenshots (use Browser MCP)
 - Handling ChatGPT UI changes
 - Selector best practices
 - Common pitfalls and debugging tips
+- TDD approach for fixing broken features
 
 ## Error Handling & Recovery
 
@@ -288,6 +298,15 @@ The MCP server includes comprehensive error handling and automatic recovery for 
 - **Session Restoration**: Automatic login when sessions expire
 - **Context Preservation**: Maintain conversation state during recovery
 - **Graceful Degradation**: Continue operation even with partial failures
+
+## Known Issues (August 2025)
+
+### Currently Broken Features
+- **Think Longer Mode**: ❌ UI location changed, needs investigation
+- **Deep Research Mode**: ❌ UI location changed, needs investigation  
+- **Some MCP tools**: ⚠️ Integration issues between direct calls and MCP wrapper
+
+See [@NEXT_PROMPT.md](@NEXT_PROMPT.md) for detailed status and fix instructions.
 
 ## Troubleshooting
 

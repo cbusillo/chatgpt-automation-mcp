@@ -1,5 +1,41 @@
 # Development Best Practices for ChatGPT Automation MCP
 
+## 🚀 BREAKTHROUGH: URL-Based Model Selection (August 2025)
+
+### The Discovery
+ChatGPT's UI changes constantly, breaking menu-based navigation. However, ChatGPT accepts URL parameters for model selection!
+
+```python
+# ❌ OLD: Complex, fragile UI navigation
+await click_model_picker()
+await wait_for_menu()
+await hover_over_legacy_models()
+await click_model_option()
+# ... lots of error-prone steps
+
+# ✅ NEW: Direct, reliable URL navigation
+await page.goto("https://chatgpt.com/?model=gpt-5")
+# Done! Model selected instantly and reliably
+```
+
+### Working URL Patterns
+```python
+# GPT-5 Family
+"https://chatgpt.com/?model=gpt-5"          # Auto/Default
+"https://chatgpt.com/?model=gpt-5-thinking" # Extended reasoning
+"https://chatgpt.com/?model=gpt-5-pro"      # Research-grade
+
+# Legacy Models  
+"https://chatgpt.com/?model=o3"             # Reasoning model
+"https://chatgpt.com/?model=gpt-4-1"        # Note: dash not dot!
+```
+
+### Why This Is Gold
+- **100% reliable** - No UI changes can break it
+- **10x faster** - Direct navigation vs menu clicking
+- **Self-documenting** - URL shows exactly what model is selected
+- **Future-proof** - URLs rarely change compared to UI
+
 ## 🔍 Testing Philosophy
 
 ### Always Verify with Visual Evidence
@@ -62,6 +98,28 @@ locator('div:has-text("Deep Research")')  # Found 5 elements!
 
 # ✅ GOOD: Use specific roles and attributes
 locator('div[role="menuitemradio"]:has-text("Deep research")').first
+```
+
+## 🧪 TDD Approach for Fixing Broken Features
+
+### The Process
+1. **Write failing test FIRST** showing expected behavior
+2. **Use Browser MCP** to explore and find UI elements
+3. **Update implementation** to make test pass
+4. **Verify with screenshots** at every step
+5. **Document the fix** for future reference
+
+### Browser MCP > Playwright MCP
+For testing and exploration, use Browser MCP:
+
+```python
+# Browser MCP provides better tools for exploration
+await mcp__browsermcp__browser_navigate(url="https://chatgpt.com")
+await mcp__browsermcp__browser_snapshot()   # Get page structure
+await mcp__browsermcp__browser_screenshot() # Visual confirmation
+
+# NOT Playwright MCP (more complex, less reliable)
+# await mcp__playwright__browser_navigate(...)
 ```
 
 ## 📸 Screenshot Testing Pattern

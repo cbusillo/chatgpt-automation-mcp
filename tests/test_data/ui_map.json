@@ -1,0 +1,35 @@
+{
+  "timestamp": "2025-08-14T16:55:16.388524",
+  "url": "https://chatgpt.com/",
+  "elements": {
+    "composer_btn_0": {
+      "aria_label": null,
+      "title": null,
+      "text": ""
+    },
+    "composer_btn_1": {
+      "aria_label": "Dictate button",
+      "title": null,
+      "text": ""
+    },
+    "attachment_menu_items": [
+      {
+        "index": 0,
+        "text": "Add photos & files",
+        "role": "menuitem"
+      },
+      {
+        "index": 1,
+        "text": "Add from Google Drive",
+        "role": "menuitem"
+      },
+      {
+        "index": 2,
+        "text": "More",
+        "role": "menuitem"
+      }
+    ],
+    "current_model": "ChatGPT 5 Thinking",
+    "deep_research": 1
+  }
+}

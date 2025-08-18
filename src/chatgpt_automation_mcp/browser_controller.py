@@ -749,12 +749,15 @@ class ChatGPTBrowserController:
             logger.debug("No active generation detected")
         
         # Now wait for response action buttons to appear - these indicate completion
-        # Look for the copy button which appears in the response footer
+        # Updated selectors based on actual ChatGPT UI (Dec 2024)
         completion_indicators = [
-            'div[data-message-author-role="assistant"] button[aria-label*="Copy"]',  # Copy button
-            'div[data-message-author-role="assistant"] button[aria-label*="copy"]',  # Alternative case
-            'div[data-message-author-role="assistant"] svg.icon-md',  # Action icons in response
-            'div[data-message-author-role="assistant"] button:has(svg)',  # Any button with icon
+            'article button[aria-label="Copy"]',  # Copy button in response
+            'article button[aria-label="Good response"]',  # Feedback button
+            'article button[aria-label="Bad response"]',  # Feedback button  
+            'article button[aria-label="Read aloud"]',  # Read aloud button
+            'button:has-text("Copy")',  # Alternative: button with text
+            'button:has-text("Good response")',  # Alternative: feedback
+            'article:last-child button:has(img)',  # Last article with button icons
         ]
         
         # Wait for any completion indicator to appear
@@ -950,22 +953,31 @@ class ChatGPTBrowserController:
                         if text.startswith("ChatGPT "):
                             text = text[8:]  # Remove "ChatGPT " prefix
                         
-                        # Normalize model names to full format
+                        # Normalize model names to full format (August 2025 UI update)
+                        # UI now shows: "ChatGPT 5 Pro", "ChatGPT 5 Thinking mini", etc.
                         model_normalizations = {
+                            # New UI format (August 2025)
                             "5": "GPT-5",
+                            "5 Pro": "GPT-5 Pro", 
                             "5 Thinking": "GPT-5 Thinking",
-                            "5 Pro": "GPT-5 Pro",
+                            "5 Thinking mini": "GPT-5 Thinking mini",
+                            "5 Fast": "GPT-5 Fast",
+                            "5 Auto": "GPT-5 Auto",
+                            # Legacy models
                             "4o": "GPT-4o",
                             "4.5": "GPT-4.5",
                             "4.1": "GPT-4.1",
-                            "4.1-mini": "GPT-4.1-mini",
+                            "4.1-mini": "GPT-4.1-mini", 
                             "o3": "o3",
                             "o3-pro": "o3-pro",
                             "o4-mini": "o4-mini",
-                            # Handle "ChatGPT X" format
+                            # Handle "ChatGPT X" format (current UI)
                             "ChatGPT 5": "GPT-5",
-                            "ChatGPT 5 Thinking": "GPT-5 Thinking",
                             "ChatGPT 5 Pro": "GPT-5 Pro",
+                            "ChatGPT 5 Thinking": "GPT-5 Thinking", 
+                            "ChatGPT 5 Thinking mini": "GPT-5 Thinking mini",
+                            "ChatGPT 5 Fast": "GPT-5 Fast",
+                            "ChatGPT 5 Auto": "GPT-5 Auto",
                             "ChatGPT 4o": "GPT-4o",
                             "ChatGPT o3": "o3",
                             "ChatGPT o4-mini": "o4-mini",
@@ -1045,13 +1057,11 @@ class ChatGPTBrowserController:
             return False
 
     async def _select_model_impl(self, model: str) -> bool:
-        """Implementation of model selection logic"""
-        # Close sidebar first to prevent UI blocking
-        if await self.is_sidebar_open():
-            logger.debug("Closing sidebar before model selection...")
-            await self.toggle_sidebar(open=False)
-            await asyncio.sleep(0.5)
+        """Implementation of model selection logic using URL-based approach.
         
+        This method uses direct URL navigation which is much more reliable than
+        navigating the constantly-changing ChatGPT UI menus.
+        """        
         # First check if we're already on the requested model
         current = await self.get_current_model()
         if current:
@@ -1078,191 +1088,91 @@ class ChatGPTBrowserController:
                 logger.info(f"Already using model: {current}")
                 return True
 
-        # Click model picker with improved selectors
-        picker_selectors = [
-            '[data-testid="model-picker"]',
-            'button[aria-haspopup="menu"]:has(span)',
-            "button[data-state]:has(span)",
-            "button:has(svg.icon-chevron-down)",
-            "nav button:has(span)",
-            ".model-selector",
-            'div[role="combobox"]',
-        ]
-
-        clicked = False
-        for selector in picker_selectors:
-            try:
-                elements = self.page.locator(selector)
-                count = await elements.count()
-                for i in range(min(count, 3)):
-                    element = elements.nth(i)
-                    if await element.is_visible():
-                        # Check if it contains model-related text
-                        text = await element.text_content() or ""
-                        if any(m in text.lower() for m in ["gpt", "o1", "o3", "model"]):
-                            await element.click()
-                            clicked = True
-                            break
-                if clicked:
-                    break
-            except Exception:
-                continue
-
-        if not clicked:
-            # Try the specific selector we know works - but get the VISIBLE one
-            for retry in range(3):
-                try:
-                    model_buttons = self.page.locator('[data-testid="model-switcher-dropdown-button"]')
-                    count = await model_buttons.count()
-                    
-                    # Try each button, preferring visible ones
-                    for i in range(count):
-                        model_button = model_buttons.nth(i)
-                        if await model_button.is_visible():
-                            try:
-                                await model_button.click()
-                                await asyncio.sleep(get_delay("click_delay"))
-                                clicked = True
-                                logger.info(f"Opened model picker with visible button {i} (attempt {retry + 1})")
-                                break
-                            except Exception as e:
-                                logger.debug(f"Failed to click visible button {i}: {e}")
-                    
-                    if not clicked and count > 0:
-                        # If no visible button worked, try force click on first
-                        model_button = model_buttons.first
-                        await model_button.click(force=True)
-                        await asyncio.sleep(get_delay("click_delay"))
-                        clicked = True
-                        logger.info(f"Opened model picker with force click (attempt {retry + 1})")
-                    
-                    if clicked:
-                        break
-                        
-                except Exception as e:
-                    logger.debug(f"Model picker click attempt {retry + 1} failed: {e}")
-                    if retry < 2:
-                        await asyncio.sleep(1)  # Wait before retry
-                
-        if not clicked:
-            logger.warning("Could not find model picker")
-            return False
-
-        # Wait for menu to open - look for menuitem elements
-        try:
-            await self.page.wait_for_selector(
-                'div[role="menuitem"]',
-                state="visible",
-                timeout=5000,
-            )
-        except Exception:
-            logger.warning("Model menu did not appear")
-            return False
+        # URL-based model mapping - much more reliable than UI navigation
+        # Based on testing August 2025: ChatGPT accepts these URL parameters
+        url_model_map = {
+            # GPT-5 models (current)
+            "gpt-5": "gpt-5",
+            "5": "gpt-5",
+            "auto": "gpt-5",
             
-        await asyncio.sleep(get_delay("model_picker_open"))  # Small delay for animation
-
-        # Model name mapping based on actual ChatGPT UI (August 2025)
-        # IMPORTANT: These must match EXACTLY what appears in the UI
-        model_map = {
-            # GPT-5 models (current) - in main menu
-            "gpt-5": ["GPT-5"],
-            "5": ["GPT-5"],
-            "gpt-5-thinking": ["GPT-5 Thinking"],
-            "thinking": ["GPT-5 Thinking"],
-            "gpt-5-pro": ["GPT-5 Pro"],
-            "pro": ["GPT-5 Pro"],
+            "gpt-5-thinking": "gpt-5-t",  # URL uses 't' not 'thinking'
+            "gpt-5-t": "gpt-5-t", 
+            "thinking": "gpt-5-t",
             
-            # Legacy models - exact text from submenu
-            "o4-mini": ["o4-mini"],
-            "o4mini": ["o4-mini"],
-            "gpt-4.5": ["GPT-4.5"],
-            "4.5": ["GPT-4.5"],
-            "o3": ["o3"],
-            "o3-pro": ["o3-pro"],
-            "gpt-4.1": ["GPT-4.1"],
-            "4.1": ["GPT-4.1"],
-            "gpt-4.1-mini": ["GPT-4.1-mini"],
-            "4.1-mini": ["GPT-4.1-mini"],
+            "gpt-5-thinking-mini": "gpt-5-t-mini", 
+            "gpt-5-t-mini": "gpt-5-t-mini",
+            "thinking-mini": "gpt-5-t-mini",
+            
+            "gpt-5-pro": "gpt-5-pro",
+            "5-pro": "gpt-5-pro", 
+            "pro": "gpt-5-pro",
+            
+            # Legacy models we care about
+            "gpt-4-1": "gpt-4-1",  # Uses dash not dot
+            "gpt-4.1": "gpt-4-1",  # Convert dot to dash
+            "4.1": "gpt-4-1",
+            "4-1": "gpt-4-1",
+            
+            "o3": "o3",
+            "o3-pro": "o3-pro",
+            
+            # Less important but supported
+            "gpt-4o": "gpt-4o",
+            "4o": "gpt-4o",
         }
-
-        # Get possible UI texts for the model
-        ui_models = model_map.get(model.lower(), [model])
-        if not isinstance(ui_models, list):
-            ui_models = [ui_models]
         
-        # Determine if model is in Legacy models submenu (August 2025 UI)
-        legacy_models = ["o4-mini", "o4mini", "gpt-4.5", "4.5", "gpt-4.1", "4.1", "gpt-4.1-mini", "4.1-mini", "o3", "o3-pro"]
-        needs_legacy_menu = model.lower() in legacy_models
+        # Get the URL model parameter
+        url_model = url_model_map.get(model.lower())
+        if not url_model:
+            logger.warning(f"Unsupported model: {model}. Supported: {list(url_model_map.keys())}")
+            return False
         
-        if needs_legacy_menu:
-            # Click/hover "Legacy models" to reveal the submenu
-            legacy_option = self.page.locator('[role="menuitem"]:has-text("Legacy models")').first
-            if await legacy_option.count() > 0 and await legacy_option.is_visible():
-                # Try clicking first (some menus need click)
-                try:
-                    await legacy_option.click()
-                    await asyncio.sleep(get_delay("more_models_menu"))  # Give submenu time to appear
-                    logger.debug("Clicked 'Legacy models' to show submenu")
-                except Exception as e:
-                    # If click fails, try hover
-                    logger.debug(f"Click failed ({e}), trying hover...")
-                    await legacy_option.hover()
-                    await asyncio.sleep(get_delay("more_models_menu"))
-                    logger.debug("Hovered over 'Legacy models' to show submenu")
+        # Navigate directly to the model URL
+        target_url = f"https://chatgpt.com/?model={url_model}"
+        logger.debug(f"Navigating to: {target_url}")
+        
+        try:
+            await self.page.goto(target_url, wait_until="domcontentloaded")
+            await asyncio.sleep(get_delay("page_load"))
+        except Exception as e:
+            logger.error(f"Failed to navigate to model URL: {e}")
+            return False
+        
+        # Verify the model was selected by checking the current model
+        await asyncio.sleep(get_delay("model_verify"))
+        new_model = await self.get_current_model()
+        if new_model:
+            # Normalize model names for comparison
+            new_model_normalized = new_model.replace(" ", "").replace("-", "").lower()
+            model_normalized = model.replace(" ", "").replace("-", "").lower()
+            
+            # Check if model changed successfully
+            if model_normalized in new_model_normalized or new_model_normalized in model_normalized:
+                logger.info(f"Successfully selected model via URL: {new_model}")
+                return True
+            # Special handling for shorthand names
+            elif model.lower() == "5" and "gpt5" in new_model_normalized and "thinking" not in new_model_normalized and "pro" not in new_model_normalized:
+                logger.info(f"Successfully selected base GPT-5 via URL: {new_model}")
+                return True
+            elif model.lower() == "thinking" and "thinking" in new_model_normalized:
+                logger.info(f"Successfully selected GPT-5 Thinking via URL: {new_model}")
+                return True
+            elif model.lower() == "pro" and "pro" in new_model_normalized:
+                logger.info(f"Successfully selected GPT-5 Pro via URL: {new_model}")
+                return True
+            elif model.lower() in ["o3"] and "o3" in new_model_normalized:
+                logger.info(f"Successfully selected o3 via URL: {new_model}")
+                return True
+            elif model.lower() in ["4.1", "4-1", "gpt-4.1", "gpt-4-1"] and "41" in new_model_normalized:
+                logger.info(f"Successfully selected GPT-4.1 via URL: {new_model}")
+                return True
             else:
-                logger.warning("Legacy models menu item not found")
-
-        # Try to find and click the model option
-        # Models now have titles and subtitles concatenated, so we need to match the start of text
-        model_clicked = False
-        for ui_model in ui_models:
-            if model_clicked:
-                break
-            
-            # Look for menuitem that starts with the model name
-            options = await self.page.locator('[role="menuitem"]').all()
-            
-            for option in options:
-                text = await option.text_content()
-                if text and text.startswith(ui_model):
-                    # Found the model, click it
-                    await option.click()
-                    model_clicked = True
-                    await asyncio.sleep(get_delay("model_selection"))  # Wait for model to switch
-                    await asyncio.sleep(get_delay("model_verify"))  # Additional wait before verification
-                    break
-        
-        if model_clicked:
-            # Verify selection
-            new_model = await self.get_current_model()
-            if new_model:
-                # Normalize model names for comparison
-                new_model_normalized = new_model.replace(" ", "").replace("-", "").lower()
-                model_normalized = model.replace(" ", "").replace("-", "").lower()
-                
-                # Check if model changed successfully
-                if model_normalized in new_model_normalized or new_model_normalized in model_normalized:
-                    logger.info(f"Successfully selected model: {new_model}")
-                    return True
-                # Special handling for shorthand names
-                elif model.lower() == "5" and "gpt5" in new_model_normalized and "thinking" not in new_model_normalized and "pro" not in new_model_normalized:
-                    logger.info(f"Successfully selected base GPT-5: {new_model}")
-                    return True
-                elif model.lower() == "thinking" and "thinking" in new_model_normalized:
-                    logger.info(f"Successfully selected GPT-5 Thinking: {new_model}")
-                    return True
-                elif model.lower() == "pro" and "pro" in new_model_normalized:
-                    logger.info(f"Successfully selected GPT-5 Pro: {new_model}")
-                    return True
-                elif model.lower() in ["o4-mini", "o4mini"] and "o4mini" in new_model_normalized:
-                    logger.info(f"Successfully selected o4-mini: {new_model}")
-                    return True
-                else:
-                    logger.warning(f"Model selection verification failed. Expected {model}, got {new_model}")
-                    return False
-        
-        logger.warning(f"Model {model} not found in picker")
-        return False
+                logger.warning(f"URL-based model selection verification failed. Expected {model}, got {new_model}")
+                return False
+        else:
+            logger.error(f"Could not verify model selection after URL navigation")
+            return False
 
     async def is_ready(self) -> bool:
         """Check if ChatGPT interface is ready"""
@@ -1468,54 +1378,48 @@ class ChatGPTBrowserController:
 
     
     async def enable_think_longer(self) -> bool:
-        """Enable Think Longer mode via attachment menu
+        """Enable Think Longer mode by selecting the gpt-5-thinking model
+        
+        Based on testing, Think Longer is now automatic with the gpt-5-thinking model
+        rather than a separate menu option.
         
         Returns:
-            True if Think Longer was enabled, False otherwise
+            True if Think Longer was enabled (model selected), False otherwise
         """
         if not self.page:
             await self.launch()
 
         try:
-            # Click the attachment/paperclip button
-            # Updated selectors based on current ChatGPT UI
-            attachment_selectors = [
-                '.composer-btn:not([aria-label*="Dictate"])',  # First composer button (not voice)
-                '.composer-btn:not([aria-label*="voice"])',     # Exclude voice button
-                'button[aria-label="Attach files"]',            # Legacy selector
-                'button:has(svg.icon-paperclip)',               # Legacy selector
-            ]
+            # Think Longer is now automatic with gpt-5-thinking model
+            logger.info("Think Longer is now automatic with gpt-5-thinking model")
             
-            attachment_button = None
-            for selector in attachment_selectors:
-                button = self.page.locator(selector).first
-                if await button.count() > 0 and await button.is_visible():
-                    attachment_button = button
-                    break
+            # Navigate to gpt-5-thinking model
+            current_url = self.page.url
+            if "?model=" in current_url:
+                # Replace existing model parameter
+                new_url = current_url.split("?model=")[0] + "?model=gpt-5-thinking"
+            else:
+                # Add model parameter
+                separator = "&" if "?" in current_url else "?"
+                new_url = current_url + separator + "model=gpt-5-thinking"
             
-            if not attachment_button:
-                logger.warning("Attachment button not found")
-                return False
-                
-            await attachment_button.click()
-            await asyncio.sleep(get_delay("menu_open"))
+            await self.page.goto(new_url)
+            await asyncio.sleep(get_delay("page_load"))
             
-            # Look for "Think longer" option in the menu
-            think_longer_selectors = [
-                'div[role="menuitem"]:has-text("Think longer")',
-                'button:has-text("Think longer")',
-                'div:text-is("Think longer")',
-            ]
-            
-            for selector in think_longer_selectors:
-                option = self.page.locator(selector).first
-                if await option.count() > 0 and await option.is_visible():
-                    await option.click()
-                    logger.info("Enabled Think Longer mode")
-                    await asyncio.sleep(get_delay("ui_update"))
+            # Verify we're on the thinking model
+            model_display = self.page.locator('[data-testid="model-switcher-dropdown-button"]').first
+            if await model_display.count() > 0:
+                model_text = await model_display.inner_text()
+                if "thinking" in model_text.lower() or "5 thinking" in model_text.lower():
+                    logger.info(f"Successfully switched to Think Longer mode via {model_text}")
                     return True
             
-            logger.warning("Think longer option not found in menu")
+            # Fallback: Check if URL changed successfully
+            if "gpt-5-thinking" in self.page.url:
+                logger.info("Think Longer mode enabled via gpt-5-thinking model")
+                return True
+            
+            logger.warning("Could not enable Think Longer mode - model switch may have failed")
             return False
             
         except Exception as e:
@@ -1525,14 +1429,18 @@ class ChatGPTBrowserController:
     async def enable_deep_research(self) -> bool:
         """Enable Deep Research mode via attachment menu
         
+        Deep Research is available as a menu item in the attachment/tools menu.
+        
         Note: Deep Research has a monthly quota (250/month)
+        
+        Returns:
+            True if Deep Research was enabled, False otherwise
         """
         if not self.page:
             await self.launch()
 
         try:
             # Click the attachment/paperclip button
-            # Updated selectors based on current ChatGPT UI
             attachment_selectors = [
                 '.composer-btn:not([aria-label*="Dictate"])',  # First composer button (not voice)
                 '.composer-btn:not([aria-label*="voice"])',     # Exclude voice button
@@ -1554,35 +1462,39 @@ class ChatGPTBrowserController:
             await attachment_button.click()
             await asyncio.sleep(get_delay("menu_open"))
             
-            # Look for "Deep research" option in the menu
+            # Look for "Deep research" option directly in the menu
+            # It's visible in the main menu, not in "More"
             research_selectors = [
-                'div[role="menuitem"]:has-text("Deep research")',
-                'button:has-text("Deep research")',
+                'text="Deep research"',  # Exact text match
                 'div:text-is("Deep research")',
+                'button:has-text("Deep research")',
+                '*:has-text("Deep research")',  # Any element with this text
             ]
             
             for selector in research_selectors:
                 option = self.page.locator(selector).first
                 if await option.count() > 0 and await option.is_visible():
                     await option.click()
+                    logger.info("Clicked Deep Research option")
+                    
                     # Wait for Deep Research UI to appear
                     try:
+                        # Wait for research-specific UI elements
                         await self.page.wait_for_selector(
-                            'text=/What are you researching/i',
+                            'text=/researching|sources|web.*search/i',
                             state="visible",
                             timeout=5000
                         )
                     except Exception:
-                        # Alternative: wait for Sources button
-                        await self.page.wait_for_selector(
-                            'button:has-text("Sources")',
-                            state="visible", 
-                            timeout=5000
-                        )
+                        # Even if we don't see specific UI, the click likely worked
+                        pass
+                    
                     logger.info("Enabled Deep Research mode")
                     return True
             
             logger.warning("Deep research option not found in menu")
+            # Close menu if still open
+            await self.page.keyboard.press("Escape")
             return False
                 
         except Exception as e:

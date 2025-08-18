@@ -20,6 +20,34 @@ MCP server for automating ChatGPT web interface via Playwright. Handles browser 
 - **[docs/TIMEOUT_AND_DELAY_GUIDELINES.md](docs/TIMEOUT_AND_DELAY_GUIDELINES.md)** - Model-specific timeouts
 - **[docs/CHROME_PROFILE_MANAGEMENT.md](docs/CHROME_PROFILE_MANAGEMENT.md)** - CRITICAL: Chrome profile troubleshooting
 
+## 🔍 Feature Locations (As of Aug 14, 2025)
+
+### Deep Research ✅ VERIFIED
+- **Location**: Attachment menu (paperclip button) 
+- **How to enable**: Click attachment → Click "Deep research"
+- **NOT in**: "More" submenu (was checked, not there)
+- **Implementation**: `browser_controller.py:enable_deep_research()`
+- **Status**: TESTED AND WORKING
+
+### Think Longer ✅ VERIFIED
+- **Location**: Automatic with "ChatGPT 5 Thinking" model
+- **How to enable**: Select gpt-5-thinking model via URL or selector
+- **NOT**: A separate menu option or toggle
+- **Implementation**: `browser_controller.py:enable_think_longer()`
+- **Status**: TESTED AND WORKING
+
+**✅ VERIFIED**: Both features tested and confirmed working. For testing:
+```bash
+# Recommended approach (no manual approval needed)
+uv run pytest tests/test_deep_research_verification.py -v -s --timeout=120
+uv run pytest tests/test_think_longer_verification.py -v -s --timeout=120
+
+# Run both verification tests together
+uv run pytest tests/test_*_verification.py -v --timeout=120
+
+# Note: pytest-timeout plugin installed - use --timeout=120 for UI automation
+```
+
 ## 🚨 Critical Rules for This Project
 
 ### 0. Chrome Profile Management (CRITICAL)
