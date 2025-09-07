@@ -1,5 +1,7 @@
 # ChatGPT Automation MCP
 
+OUT OF DATE
+
 A Model Context Protocol (MCP) server for automating ChatGPT web interface using Playwright. Provides programmatic control over ChatGPT conversations including model selection, message sending, and response retrieval.
 
 ## Features
